@@ -1,0 +1,13 @@
+system:
+  camera_index: 1
+  line_margin: 20
+  scan_cooldown_sec: 0.5
+
+paths:
+  db_path: 'data/inventory.json'
+  yolo_model: 'models/newmodel.pt'
+
+ui:
+  headless: false
+  dashboard_width: 320
+  flash_frames: 15
