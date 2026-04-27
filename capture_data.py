@@ -5,8 +5,8 @@ import os
 # ==========================================
 # НАСТРОЙКИ ЗА ПРОЕКТА
 # ==========================================
-ITEM_NAME = "servo_motor_1"  # Променяй това за всеки нов предмет (или "negative_hand")
-NUM_PHOTOS = 300              # Колко снимки искаш
+ITEM_NAME = "nulls"  # Променяй това за всеки нов предмет (или "negative_hand")
+NUM_PHOTOS = 50              # Колко снимки искаш
 DELAY = 0.5                  # Пауза между снимките (секунди)
 # ==========================================
 
@@ -14,7 +14,7 @@ save_dir = f"dataset/{ITEM_NAME}"
 os.makedirs(save_dir, exist_ok=True)
 
 print("Стартиране на камерата с висока резолюция...")
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 # Оптимизация за CZUR Камера
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
