@@ -1,0 +1,15 @@
+[Unit]
+Description=Smart Checkout Tracking Service
+After=network.target multi-user.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/smart-checkout
+Environment="DISPLAY=:0"
+# Промени пътя към виртуалната среда, ако е нужно
+ExecStart=/home/pi/smart-checkout/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+data/*.db
+data/*.json
+!data/.keep
+models/*.pt
+!models/.keep
