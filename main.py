@@ -8,6 +8,7 @@ import yaml
 import sys
 import math
 from ultralytics import YOLO
+from src.yolo_thread import AsyncYOLO
 
 # Импортиране на локални модули
 from src.database import InventoryDatabase
@@ -25,7 +26,7 @@ def load_config(config_path='config.yaml'):
 
 def is_stationary(history, threshold=20):
     """Проверява дали обектът е останал на място през последните N кадъра."""
-    if len(history) < 15:
+    if len(history) < 5:
         return False
     # Проверка на разстоянието между първата и последната записана позиция
     x_start, y_start = history[0]
@@ -42,8 +43,8 @@ def main():
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     inventory_db = InventoryDatabase(db_path)
     
-    print("Зареждане на YOLO модел...")
-    model = YOLO(config['paths']['yolo_model'])
+    print("Зареждане на YOLO модел (Async)...")
+    model = AsyncYOLO(config['paths']['yolo_model']).start()
     
     print("Свързване с камерата (асинхронно)...")
     try:
@@ -76,7 +77,11 @@ def main():
         # Дефиниране на зоните (Средата на екрана)
         split_x = w // 2
         
-        results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
+        # Подаваме кадъра към фоновата AI нишка
+        model.process_frame(frame)
+        
+        # Взимаме последните изчислени резултати БЕЗ да чакаме
+        results = model.get_results()
 
         # Обновяване на кеша само ако има промяна
         if db_needs_update:
@@ -90,11 +95,11 @@ def main():
         # Чертане на разделителната линия (Тънка, пунктирана или лека бяла линия)
         cv2.line(frame, (split_x, 0), (split_x, h), (200, 200, 200), 1)
 
-        if results[0].boxes is not None and results[0].boxes.id is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            track_ids = results[0].boxes.id.int().cpu().numpy()
-            clss = results[0].boxes.cls.cpu().numpy()
-            class_names = results[0].names
+        if results is not None and results.boxes is not None and results.boxes.id is not None:
+            boxes = results.boxes.xyxy.cpu().numpy()
+            track_ids = results.boxes.id.int().cpu().numpy()
+            clss = results.boxes.cls.cpu().numpy()
+            class_names = results.names
             
             # Активни IDs в този кадър, за да чистим старата история
             active_ids = set()
@@ -111,7 +116,7 @@ def main():
                 if track_id not in track_history:
                     track_history[track_id] = []
                 track_history[track_id].append((cx, cy))
-                if len(track_history[track_id]) > 15:
+                if len(track_history[track_id]) > 5:
                     track_history[track_id].pop(0)
 
                 # Идентификация на зоната
@@ -205,6 +210,7 @@ def main():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
+    model.stop()
     cap.stop()
     cv2.destroyAllWindows()
     print("Системата е спряна успешно.")
