@@ -118,43 +118,61 @@ def main():
                 current_zone = "IN" if cx < split_x else "OUT"
                 
                 # Логика за Dwell Time и Сканиране
-                if track_id not in processed_tracks:
-                    if is_stationary(track_history[track_id]):
-                        # Обектът е спрял -> Сканираме!
+                if is_stationary(track_history[track_id]):
+                    should_scan = False
+                    if track_id not in processed_tracks:
+                        should_scan = True
+                    else:
+                        # Ако е имало грешка или обектът стои дълго, сканираме отново през 2 секунди
+                        if time.time() - processed_tracks[track_id].get('time', 0) > 2.0:
+                            should_scan = True
+                            
+                    if should_scan:
                         uid, code_type = scan_code_in_roi(frame, x1, y1, x2, y2)
                         
                         if uid:
-                            qr_prefix = uid.split('_')[0] if '_' in uid else uid
-                            
-                            # Валидация 1: Anti-Spoofing
-                            if qr_prefix != yolo_class:
-                                processed_tracks[track_id] = f"ERROR: SPOOF! YOLO={yolo_class}, Code={qr_prefix}"
+                            # Ако сканираме същия предмет, който вече е успешен, само подновяваме таймера
+                            if track_id in processed_tracks and processed_tracks[track_id].get('uid') == uid and "SUCCESS" in processed_tracks[track_id].get('status', ''):
+                                processed_tracks[track_id]['time'] = time.time()
                             else:
-                                # Валидация 2 & 3: Database Status
-                                is_in_stock = inventory_db.check_item_status(uid)
+                                qr_prefix = uid.split('_')[0] if '_' in uid else uid
+                                status = ""
                                 
-                                if current_zone == "IN":
-                                    if is_in_stock is True:
-                                        processed_tracks[track_id] = f"ERROR: Veche e vutre!"
-                                    else:
-                                        inventory_db.log_action(uid, yolo_class, 'ADDED')
-                                        db_needs_update = True
-                                        processed_tracks[track_id] = f"SUCCESS: Vkarano!"
-                                        
-                                elif current_zone == "OUT":
-                                    if is_in_stock is False or is_in_stock is None:
-                                        processed_tracks[track_id] = f"ERROR: Ne e v sklada!"
-                                    else:
-                                        inventory_db.log_action(uid, yolo_class, 'REMOVED')
-                                        db_needs_update = True
-                                        processed_tracks[track_id] = f"SUCCESS: Izkarano!"
+                                # Валидация 1: Anti-Spoofing
+                                if qr_prefix != yolo_class:
+                                    status = f"ERROR: SPOOF! YOLO={yolo_class}, Code={qr_prefix}"
+                                else:
+                                    # Валидация 2 & 3: Database Status
+                                    is_in_stock = inventory_db.check_item_status(uid)
+                                    
+                                    if current_zone == "IN":
+                                        if is_in_stock is True:
+                                            status = f"ERROR: Veche e vutre!"
+                                        else:
+                                            inventory_db.log_action(uid, yolo_class, 'ADDED')
+                                            db_needs_update = True
+                                            status = f"SUCCESS: Vkarano!"
+                                            
+                                    elif current_zone == "OUT":
+                                        if is_in_stock is False or is_in_stock is None:
+                                            status = f"ERROR: Ne e v sklada!"
+                                        else:
+                                            inventory_db.log_action(uid, yolo_class, 'REMOVED')
+                                            db_needs_update = True
+                                            status = f"SUCCESS: Izkarano!"
+                                
+                                processed_tracks[track_id] = {
+                                    'status': status,
+                                    'time': time.time(),
+                                    'uid': uid
+                                }
 
                 # Визуално оформление (Feedback)
                 box_color = (0, 165, 255) # Оранжево (Moving)
                 info_text = f"ID:{track_id} {yolo_class} (Moving)"
                 
                 if track_id in processed_tracks:
-                    status = processed_tracks[track_id]
+                    status = processed_tracks[track_id].get('status', '')
                     if status.startswith("SUCCESS: Vkarano"):
                         box_color = (0, 255, 0) # Зелено
                         info_text = status

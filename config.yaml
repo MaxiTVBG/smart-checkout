@@ -5,7 +5,7 @@ system:
 
 paths:
   db_path: 'data/inventory.json'
-  yolo_model: 'models/newmodel.pt'
+  yolo_model: 'models/new_checkout.pt'
 
 ui:
   headless: false
