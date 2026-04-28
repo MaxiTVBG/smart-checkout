@@ -62,6 +62,15 @@ class InventoryDatabase:
             })
         return recent
 
+    def check_item_status(self, uid):
+        """Връща True ако предметът е вътре (in_stock=1), False ако е вън (0) и None ако не съществува."""
+        c = self.conn.cursor()
+        c.execute("SELECT in_stock FROM items WHERE uid = ?", (uid,))
+        row = c.fetchone()
+        if row is None:
+            return None
+        return row[0] == 1
+
     def log_action(self, uid, item_class, action):
         """Записва събитие и обновява наличността (UPSERT)."""
         c = self.conn.cursor()
