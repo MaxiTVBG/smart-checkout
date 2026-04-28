@@ -1,8 +1,11 @@
+import os
+# Заобикаляне на проблема с Wayland на Raspberry Pi Bookworm
+os.environ["QT_QPA_PLATFORM"] = "xcb"
+
 import cv2
 import time
 import yaml
 import sys
-import os
 import math
 from ultralytics import YOLO
 

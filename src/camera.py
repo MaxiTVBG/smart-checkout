@@ -25,7 +25,11 @@ class CameraStream:
         self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
         # Четем първия кадър
-        (self.grabbed, self.frame) = self.stream.read()
+        (self.grabbed, frame) = self.stream.read()
+        if self.grabbed and frame is not None:
+            self.frame = cv2.resize(frame, (640, 480))
+        else:
+            self.frame = frame
         self.stopped = False
 
     def start(self):
@@ -36,7 +40,11 @@ class CameraStream:
     def update(self):
         while not self.stopped:
             # Непрекъснато "източваме" буфера на камерата във фонов режим
-            (self.grabbed, self.frame) = self.stream.read()
+            (grabbed, frame) = self.stream.read()
+            self.grabbed = grabbed
+            # Гарантираме 640x480 дори ако камерата игнорира CAP_PROP!
+            if grabbed and frame is not None:
+                self.frame = cv2.resize(frame, (640, 480))
 
     def read(self):
         # Връщаме статуса и последния заснет кадър
