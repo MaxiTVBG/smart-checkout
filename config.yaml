@@ -9,5 +9,5 @@ paths:
 
 ui:
   headless: false
-  dashboard_width: 320
+  dashboard_width: 200
   flash_frames: 15

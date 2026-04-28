@@ -92,8 +92,8 @@ def main():
         # Чертане на Smart Зони
         cv2.line(frame, (split_x, 0), (split_x, h), (255, 255, 255), 2)
         # Полупрозрачни етикети за зоните
-        cv2.putText(frame, "ZONA: VKARVANE (IN)", (workspace_start_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(frame, "ZONA: IZKARVANE (OUT)", (split_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 0), 2)
+        cv2.putText(frame, "IN (DOBAVI)", (workspace_start_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(frame, "OUT (MAHNI)", (split_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 0), 2)
 
         if results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
