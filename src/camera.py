@@ -19,6 +19,11 @@ class CameraStream:
         if not self.stream.isOpened():
             raise RuntimeError(f"Грешка при отваряне на камера {src}!")
             
+        # Хардуерна оптимизация: Ограничаваме резолюцията до 640x480
+        # YOLO не се нуждае от повече пиксели, а големите кадри сриват кадрите в секунда (FPS)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
         # Четем първия кадър
         (self.grabbed, self.frame) = self.stream.read()
         self.stopped = False

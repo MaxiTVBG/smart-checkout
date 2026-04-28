@@ -58,6 +58,11 @@ def main():
 
     print("Системата е готова (Smart Counter режим). Натисни 'q' за изход.")
 
+    # Кеш на базата данни (за да не я питаме 30 пъти в секунда)
+    cached_inv_state = inventory_db.get_inventory_state()
+    cached_rec_logs = inventory_db.get_recent_logs()
+    db_needs_update = False
+
     while True:
         success, frame = cap.read()
         if not success or frame is None:
@@ -72,10 +77,14 @@ def main():
         
         results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
 
-        # Чертане на UI (Dashboard)
-        inv_state = inventory_db.get_inventory_state()
-        rec_logs = inventory_db.get_recent_logs()
-        draw_dashboard(frame, inv_state, rec_logs, panel_w)
+        # Обновяване на кеша само ако има промяна
+        if db_needs_update:
+            cached_inv_state = inventory_db.get_inventory_state()
+            cached_rec_logs = inventory_db.get_recent_logs()
+            db_needs_update = False
+
+        # Чертане на UI (Dashboard) с кешираните данни
+        draw_dashboard(frame, cached_inv_state, cached_rec_logs, panel_w)
         
         # Чертане на Smart Зони
         cv2.line(frame, (split_x, 0), (split_x, h), (255, 255, 255), 2)
@@ -131,6 +140,7 @@ def main():
                                         processed_tracks[track_id] = f"ERROR: Veche e vutre!"
                                     else:
                                         inventory_db.log_action(uid, yolo_class, 'ADDED')
+                                        db_needs_update = True
                                         processed_tracks[track_id] = f"SUCCESS: Vkarano!"
                                         
                                 elif current_zone == "OUT":
@@ -138,6 +148,7 @@ def main():
                                         processed_tracks[track_id] = f"ERROR: Ne e v sklada!"
                                     else:
                                         inventory_db.log_action(uid, yolo_class, 'REMOVED')
+                                        db_needs_update = True
                                         processed_tracks[track_id] = f"SUCCESS: Izkarano!"
 
                 # Визуално оформление (Feedback)
