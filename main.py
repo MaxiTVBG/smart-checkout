@@ -3,6 +3,7 @@ import time
 import yaml
 import sys
 import os
+import math
 from ultralytics import YOLO
 
 # Импортиране на локални модули
@@ -19,11 +20,21 @@ def load_config(config_path='config.yaml'):
         print(f"Грешка при зареждане на {config_path}: {e}")
         sys.exit(1)
 
+def is_stationary(history, threshold=20):
+    """Проверява дали обектът е останал на място през последните N кадъра."""
+    if len(history) < 15:
+        return False
+    # Проверка на разстоянието между първата и последната записана позиция
+    x_start, y_start = history[0]
+    x_end, y_end = history[-1]
+    dist = math.hypot(x_end - x_start, y_end - y_start)
+    return dist < threshold
+
 def main():
     config = load_config()
     
     # Инициализация
-    print("Инициализация на база данни (TinyDB)...")
+    print("Инициализация на база данни (SQLite WAL)...")
     db_path = config['paths']['db_path']
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     inventory_db = InventoryDatabase(db_path)
@@ -38,42 +49,39 @@ def main():
         print(e)
         return
 
-    # Състояние
-    qr_cache = {}      
-    last_side = {}     
-    scan_cooldown = {}
-    flash_frames = 0
-    flash_color = (255, 255, 0)
+    # Състояние за Smart Counter
+    track_history = {}    # { track_id: [(cx, cy), ...] }
+    processed_tracks = {} # { track_id: "STATUS_MESSAGE" }
     
-    line_margin = config['system']['line_margin']
-    scan_cooldown_sec = config['system']['scan_cooldown_sec']
     panel_w = config['ui']['dashboard_width']
     headless = config['ui'].get('headless', False)
 
-    print("Системата е готова. Натисни 'q' за изход.")
+    print("Системата е готова (Smart Counter режим). Натисни 'q' за изход.")
 
-    # Главен цикъл (вече не проверяваме isOpened, защото нишката се грижи за това)
     while True:
         success, frame = cap.read()
         if not success or frame is None:
             continue
             
         h, w = frame.shape[:2]
-        # Изместване на виртуалната линия след Dashboard-a
-        line_x = (w // 2) + 100 
+        
+        # Дефиниране на зоните (извън UI панела)
+        workspace_start_x = panel_w
+        workspace_w = w - workspace_start_x
+        split_x = workspace_start_x + (workspace_w // 2)
         
         results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
-        
-        if flash_frames > 0:
-            current_line_color = flash_color
-            flash_frames -= 1
-        else:
-            current_line_color = (255, 255, 0)
 
-        # Чертане на интерфейс
+        # Чертане на UI (Dashboard)
         inv_state = inventory_db.get_inventory_state()
         rec_logs = inventory_db.get_recent_logs()
         draw_dashboard(frame, inv_state, rec_logs, panel_w)
+        
+        # Чертане на Smart Зони
+        cv2.line(frame, (split_x, 0), (split_x, h), (255, 255, 255), 2)
+        # Полупрозрачни етикети за зоните
+        cv2.putText(frame, "ZONA: VKARVANE (IN)", (workspace_start_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(frame, "ZONA: IZKARVANE (OUT)", (split_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 0), 2)
 
         if results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
@@ -81,80 +89,89 @@ def main():
             clss = results[0].boxes.cls.cpu().numpy()
             class_names = results[0].names
             
+            # Активни IDs в този кадър, за да чистим старата история
+            active_ids = set()
+            
             for box, track_id, cls_idx in zip(boxes, track_ids, clss):
+                active_ids.add(track_id)
                 x1, y1, x2, y2 = map(int, box)
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
                 
                 yolo_class = class_names[int(cls_idx)]
                 
-                # Сканиране с cooldown
-                if track_id not in qr_cache:
-                    current_time = time.time()
-                    if current_time - scan_cooldown.get(track_id, 0) > scan_cooldown_sec:
-                        scan_cooldown[track_id] = current_time
-                        
+                # Обновяване на историята на движението
+                if track_id not in track_history:
+                    track_history[track_id] = []
+                track_history[track_id].append((cx, cy))
+                if len(track_history[track_id]) > 15:
+                    track_history[track_id].pop(0)
+
+                # Идентификация на зоната
+                current_zone = "IN" if cx < split_x else "OUT"
+                
+                # Логика за Dwell Time и Сканиране
+                if track_id not in processed_tracks:
+                    if is_stationary(track_history[track_id]):
+                        # Обектът е спрял -> Сканираме!
                         uid, code_type = scan_code_in_roi(frame, x1, y1, x2, y2)
+                        
                         if uid:
                             qr_prefix = uid.split('_')[0] if '_' in uid else uid
-                            is_valid = (qr_prefix == yolo_class)
                             
-                            qr_cache[track_id] = {
-                                "uid": uid,
-                                "valid": is_valid,
-                                "type": code_type
-                            }
-                            
-                            if not is_valid:
-                                print(f"[АНТИ-SPOOF] Отхвърлено! YOLO: {yolo_class} != Code: {qr_prefix}")
-
-                # Визуално оформление на bounding box
-                box_color = (255, 165, 0) 
-                info_text = f"ID:{track_id} {yolo_class} [Scan...]"
-                
-                if track_id in qr_cache:
-                    qr_data = qr_cache[track_id]
-                    c_type = qr_data['type']
-                    if not qr_data["valid"]:
-                        box_color = (0, 0, 255)
-                        info_text = f"ID:{track_id} {yolo_class} [SPOOF {c_type}]"
-                    else:
-                        box_color = (0, 255, 0)
-                        info_text = f"ID:{track_id} {yolo_class} [OK {c_type}]"
-                        
-                        # Логика за пресичане (Hysteresis)
-                        current_side = None
-                        if cx < line_x - line_margin:
-                            current_side = 'L'
-                        elif cx > line_x + line_margin:
-                            current_side = 'R'
-                            
-                        if current_side is not None:
-                            if track_id in last_side:
-                                prev_side = last_side[track_id]
+                            # Валидация 1: Anti-Spoofing
+                            if qr_prefix != yolo_class:
+                                processed_tracks[track_id] = f"ERROR: SPOOF! YOLO={yolo_class}, Code={qr_prefix}"
+                            else:
+                                # Валидация 2 & 3: Database Status
+                                is_in_stock = inventory_db.check_item_status(uid)
                                 
-                                if prev_side == 'L' and current_side == 'R':
-                                    inventory_db.log_action(qr_data["uid"], yolo_class, 'ADDED')
-                                    flash_color = (0, 255, 0) 
-                                    flash_frames = config['ui']['flash_frames']
-                                    
-                                elif prev_side == 'R' and current_side == 'L':
-                                    inventory_db.log_action(qr_data["uid"], yolo_class, 'REMOVED')
-                                    flash_color = (0, 0, 255)
-                                    flash_frames = config['ui']['flash_frames']
-                                    
-                            last_side[track_id] = current_side
+                                if current_zone == "IN":
+                                    if is_in_stock is True:
+                                        processed_tracks[track_id] = f"ERROR: Veche e vutre!"
+                                    else:
+                                        inventory_db.log_action(uid, yolo_class, 'ADDED')
+                                        processed_tracks[track_id] = f"SUCCESS: Vkarano!"
+                                        
+                                elif current_zone == "OUT":
+                                    if is_in_stock is False or is_in_stock is None:
+                                        processed_tracks[track_id] = f"ERROR: Ne e v sklada!"
+                                    else:
+                                        inventory_db.log_action(uid, yolo_class, 'REMOVED')
+                                        processed_tracks[track_id] = f"SUCCESS: Izkarano!"
+
+                # Визуално оформление (Feedback)
+                box_color = (0, 165, 255) # Оранжево (Moving)
+                info_text = f"ID:{track_id} {yolo_class} (Moving)"
+                
+                if track_id in processed_tracks:
+                    status = processed_tracks[track_id]
+                    if status.startswith("SUCCESS: Vkarano"):
+                        box_color = (0, 255, 0) # Зелено
+                        info_text = status
+                    elif status.startswith("SUCCESS: Izkarano"):
+                        box_color = (255, 100, 0) # Синьо-оранжево
+                        info_text = status
+                    elif status.startswith("ERROR"):
+                        box_color = (0, 0, 255) # Червено
+                        info_text = status
+                else:
+                    if is_stationary(track_history.get(track_id, [])):
+                        box_color = (0, 255, 255) # Жълто
+                        info_text = f"ID:{track_id} {yolo_class} (Scanning...)"
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-                cv2.circle(frame, (cx, cy), 5, box_color, -1)
                 
+                # Изчертаване на текста с черен фон
                 (tw, th), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                 cv2.rectangle(frame, (x1, y1 - 20), (x1 + tw, y1), (0, 0, 0), -1)
                 cv2.putText(frame, info_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-        cv2.line(frame, (line_x, 0), (line_x, h), current_line_color, 2)
-        cv2.putText(frame, "OUT", (line_x - 60, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-        cv2.putText(frame, "IN (Warehouse)", (line_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            # Почистване на паметта (ако обектът е вдигнат от плота, го махаме от локнатите)
+            lost_tracks = list(set(track_history.keys()) - active_ids)
+            for tid in lost_tracks:
+                track_history.pop(tid, None)
+                processed_tracks.pop(tid, None)
 
         if not headless:
             cv2.imshow("Smart Checkout Tracker", frame)
