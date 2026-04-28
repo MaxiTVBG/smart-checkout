@@ -1,5 +1,5 @@
 system:
-  camera_index: 1
+  camera_index: 0
   line_margin: 20
   scan_cooldown_sec: 0.5
 

@@ -12,7 +12,7 @@ from ultralytics import YOLO
 # Импортиране на локални модули
 from src.database import InventoryDatabase
 from src.scanner import scan_code_in_roi
-from src.ui import draw_dashboard
+from src.ui import draw_hud
 from src.camera import CameraStream
 
 def load_config(config_path='config.yaml'):
@@ -56,7 +56,7 @@ def main():
     track_history = {}    # { track_id: [(cx, cy), ...] }
     processed_tracks = {} # { track_id: "STATUS_MESSAGE" }
     
-    panel_w = config['ui']['dashboard_width']
+
     headless = config['ui'].get('headless', False)
 
     print("Системата е готова (Smart Counter режим). Натисни 'q' за изход.")
@@ -73,10 +73,8 @@ def main():
             
         h, w = frame.shape[:2]
         
-        # Дефиниране на зоните (извън UI панела)
-        workspace_start_x = panel_w
-        workspace_w = w - workspace_start_x
-        split_x = workspace_start_x + (workspace_w // 2)
+        # Дефиниране на зоните (Средата на екрана)
+        split_x = w // 2
         
         results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False)
 
@@ -86,14 +84,11 @@ def main():
             cached_rec_logs = inventory_db.get_recent_logs()
             db_needs_update = False
 
-        # Чертане на UI (Dashboard) с кешираните данни
-        draw_dashboard(frame, cached_inv_state, cached_rec_logs, panel_w)
+        # Чертане на новия HUD интерфейс
+        draw_hud(frame, cached_inv_state, cached_rec_logs)
         
-        # Чертане на Smart Зони
-        cv2.line(frame, (split_x, 0), (split_x, h), (255, 255, 255), 2)
-        # Полупрозрачни етикети за зоните
-        cv2.putText(frame, "IN (DOBAVI)", (workspace_start_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        cv2.putText(frame, "OUT (MAHNI)", (split_x + 20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 0), 2)
+        # Чертане на разделителната линия (Тънка, пунктирана или лека бяла линия)
+        cv2.line(frame, (split_x, 0), (split_x, h), (200, 200, 200), 1)
 
         if results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()

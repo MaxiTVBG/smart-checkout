@@ -26,10 +26,10 @@ class CameraStream:
 
         # Четем първия кадър
         (self.grabbed, frame) = self.stream.read()
-        if self.grabbed and frame is not None:
-            self.frame = cv2.resize(frame, (640, 480))
-        else:
-            self.frame = frame
+        if not self.grabbed or frame is None:
+            raise RuntimeError(f"ГРЕШКА: Камерата на индекс {src} не връща валидни кадри! Смени 'camera_index' в config.yaml!")
+            
+        self.frame = cv2.resize(frame, (640, 480))
         self.stopped = False
 
     def start(self):
