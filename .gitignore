@@ -7,5 +7,3 @@ __pycache__/
 data/*.db
 data/*.json
 !data/.keep
-models/*.pt
-!models/.keep
