@@ -23,15 +23,21 @@ def load_config(config_path='config.yaml'):
         print(f"Грешка при зареждане на {config_path}: {e}")
         sys.exit(1)
 
-def is_stationary(history, threshold=20):
-    """Проверява дали обектът е останал на място през последните N кадъра."""
-    if len(history) < 15:
+def is_stationary(history, threshold=15):
+    """Проверява дали обектът е останал на място през последните 6 кадъра."""
+    if len(history) < 6:
         return False
-    # Проверка на разстоянието между първата и последната записана позиция
-    x_start, y_start = history[0]
-    x_end, y_end = history[-1]
-    dist = math.hypot(x_end - x_start, y_end - y_start)
-    return dist < threshold
+    
+    # Намираме центъра на последните 6 позиции
+    recent = history[-6:]
+    avg_x = sum(p[0] for p in recent) / 6
+    avg_y = sum(p[1] for p in recent) / 6
+    
+    # Проверяваме дали някоя точка бяга от центъра (липса на треперене)
+    for x, y in recent:
+        if math.hypot(x - avg_x, y - avg_y) > threshold:
+            return False
+    return True
 
 def main():
     config = load_config()
@@ -56,7 +62,7 @@ def main():
     track_history = {}    # { track_id: [(cx, cy), ...] }
     processed_tracks = {} # { track_id: "STATUS_MESSAGE" }
     
-
+    scan_cooldown = config['system'].get('scan_cooldown_sec', 1.0)
     headless = config['ui'].get('headless', False)
 
     print("Системата е готова (Smart Counter режим). Натисни 'q' за изход.")
@@ -111,7 +117,7 @@ def main():
                 if track_id not in track_history:
                     track_history[track_id] = []
                 track_history[track_id].append((cx, cy))
-                if len(track_history[track_id]) > 15:
+                if len(track_history[track_id]) > 6:
                     track_history[track_id].pop(0)
 
                 # Идентификация на зоната
@@ -123,8 +129,8 @@ def main():
                     if track_id not in processed_tracks:
                         should_scan = True
                     else:
-                        # Ако е имало грешка или обектът стои дълго, сканираме отново през 2 секунди
-                        if time.time() - processed_tracks[track_id].get('time', 0) > 2.0:
+                        # Ако е имало грешка или обектът стои дълго, сканираме отново
+                        if time.time() - processed_tracks[track_id].get('time', 0) > scan_cooldown:
                             should_scan = True
                             
                     if should_scan:

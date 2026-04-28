@@ -1,11 +1,11 @@
 system:
   camera_index: 0
   line_margin: 20
-  scan_cooldown_sec: 0.5
+  scan_cooldown_sec: 1.0
 
 paths:
   db_path: 'data/inventory.json'
-  yolo_model: 'models/new_checkout.pt'
+  yolo_model: 'models/new_checkout_ncnn_model'
 
 ui:
   headless: false
