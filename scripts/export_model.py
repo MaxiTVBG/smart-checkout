@@ -6,7 +6,7 @@ def main():
     print("==========================================================")
     
     # 1. Зареди оригиналния PyTorch модел
-    model_path = "../models/newmodel.pt"
+    model_path = "models/newmodel.pt"
     print(f"Зареждане на {model_path} ...")
     model = YOLO(model_path)
     
