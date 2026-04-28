@@ -141,7 +141,8 @@ def main():
                             if track_id in processed_tracks and processed_tracks[track_id].get('uid') == uid and "SUCCESS" in processed_tracks[track_id].get('status', ''):
                                 processed_tracks[track_id]['time'] = time.time()
                             else:
-                                qr_prefix = uid.split('_')[0] if '_' in uid else uid
+                                # Използваме rsplit('_', 1), за да разделим само по ПОСЛЕДНАТА долна черта
+                                qr_prefix = uid.rsplit('_', 1)[0] if '_' in uid else uid
                                 status = ""
                                 
                                 # Валидация 1: Anti-Spoofing
