@@ -4,6 +4,4 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-data/*.db
-data/*.json
-!data/.keep
+
