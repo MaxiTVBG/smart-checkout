@@ -35,6 +35,15 @@ class InventoryDatabase:
                 timestamp DATETIME
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS registered_codes (
+                public_uid TEXT NOT NULL UNIQUE,
+                payload TEXT NOT NULL UNIQUE,
+                item_class TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL
+            )
+        ''')
         self.conn.commit()
 
     def get_inventory_state(self):
@@ -70,6 +79,59 @@ class InventoryDatabase:
         if row is None:
             return None
         return row[0] == 1
+
+    def register_code(self, public_uid, payload, item_class, active=True):
+        """Регистрира официален Data Matrix код. UNIQUE constraints спират дубликати."""
+        c = self.conn.cursor()
+        c.execute('''
+            INSERT INTO registered_codes (public_uid, payload, item_class, active, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            public_uid,
+            payload,
+            item_class,
+            1 if active else 0,
+            datetime.datetime.now().isoformat()
+        ))
+        self.conn.commit()
+
+    def get_registered_code(self, payload):
+        """Връща регистриран код по пълния payload или None."""
+        c = self.conn.cursor()
+        c.execute('''
+            SELECT public_uid, payload, item_class, active, created_at
+            FROM registered_codes
+            WHERE payload = ?
+        ''', (payload,))
+        row = c.fetchone()
+        if row is None:
+            return None
+        return {
+            "public_uid": row[0],
+            "payload": row[1],
+            "item_class": row[2],
+            "active": bool(row[3]),
+            "created_at": row[4],
+        }
+
+    def get_registered_code_by_public_uid(self, public_uid):
+        """Връща регистриран код по публичен UID или None."""
+        c = self.conn.cursor()
+        c.execute('''
+            SELECT public_uid, payload, item_class, active, created_at
+            FROM registered_codes
+            WHERE public_uid = ?
+        ''', (public_uid,))
+        row = c.fetchone()
+        if row is None:
+            return None
+        return {
+            "public_uid": row[0],
+            "payload": row[1],
+            "item_class": row[2],
+            "active": bool(row[3]),
+            "created_at": row[4],
+        }
 
     def log_action(self, uid, item_class, action):
         """Записва събитие и обновява наличността (UPSERT)."""

@@ -4,8 +4,11 @@ system:
   scan_cooldown_sec: 1.0
 
 paths:
-  db_path: 'data/inventory.json'
+  db_path: 'data/inventory.db'
   yolo_model: 'models/new_checkout_ncnn_model'
+
+security:
+  secret_env: 'SMART_CHECKOUT_CODE_SECRET'
 
 ui:
   headless: false

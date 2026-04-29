@@ -12,6 +12,7 @@ from ultralytics import YOLO
 # Импортиране на локални модули
 from src.database import InventoryDatabase
 from src.scanner import scan_code_in_roi
+from src.secure_codes import SecureCodeError, load_code_secret, validate_registered_code
 from src.ui import draw_hud
 from src.camera import CameraStream
 
@@ -41,6 +42,12 @@ def is_stationary(history, threshold=15):
 
 def main():
     config = load_config()
+
+    try:
+        code_secret = load_code_secret(config)
+    except SecureCodeError as e:
+        print(f"Грешка в защитата на Data Matrix кодовете: {e}")
+        return
     
     # Инициализация
     print("Инициализация на база данни (SQLite WAL)...")
@@ -134,44 +141,50 @@ def main():
                             should_scan = True
                             
                     if should_scan:
-                        uid, code_type = scan_code_in_roi(frame, x1, y1, x2, y2)
+                        payload, code_type = scan_code_in_roi(frame, x1, y1, x2, y2)
                         
-                        if uid:
+                        if payload:
                             # Ако сканираме същия предмет, който вече е успешен, само подновяваме таймера
-                            if track_id in processed_tracks and processed_tracks[track_id].get('uid') == uid and "SUCCESS" in processed_tracks[track_id].get('status', ''):
+                            if track_id in processed_tracks and processed_tracks[track_id].get('payload') == payload and "SUCCESS" in processed_tracks[track_id].get('status', ''):
                                 processed_tracks[track_id]['time'] = time.time()
                             else:
-                                # Използваме rsplit('_', 1), за да разделим само по ПОСЛЕДНАТА долна черта
-                                qr_prefix = uid.rsplit('_', 1)[0] if '_' in uid else uid
                                 status = ""
+                                inventory_uid = None
                                 
-                                # Валидация 1: Anti-Spoofing
-                                if qr_prefix != yolo_class:
-                                    status = f"ERROR: SPOOF! YOLO={yolo_class}, Code={qr_prefix}"
+                                try:
+                                    secure_code = validate_registered_code(payload, code_secret, inventory_db)
+                                    inventory_uid = secure_code.inventory_uid
+                                except SecureCodeError as e:
+                                    status = f"ERROR: CODE! {e}"
                                 else:
-                                    # Валидация 2 & 3: Database Status
-                                    is_in_stock = inventory_db.check_item_status(uid)
-                                    
-                                    if current_zone == "IN":
-                                        if is_in_stock is True:
-                                            status = f"ERROR: Veche e vutre!"
-                                        else:
-                                            inventory_db.log_action(uid, yolo_class, 'ADDED')
-                                            db_needs_update = True
-                                            status = f"SUCCESS: Vkarano!"
-                                            
-                                    elif current_zone == "OUT":
-                                        if is_in_stock is False or is_in_stock is None:
-                                            status = f"ERROR: Ne e v sklada!"
-                                        else:
-                                            inventory_db.log_action(uid, yolo_class, 'REMOVED')
-                                            db_needs_update = True
-                                            status = f"SUCCESS: Izkarano!"
+                                    # Валидация 1: Anti-Spoofing
+                                    if secure_code.item_class != yolo_class:
+                                        status = f"ERROR: SPOOF! YOLO={yolo_class}, Code={secure_code.item_class}"
+                                    else:
+                                        # Валидация 2 & 3: Database Status
+                                        is_in_stock = inventory_db.check_item_status(inventory_uid)
+
+                                        if current_zone == "IN":
+                                            if is_in_stock is True:
+                                                status = f"ERROR: Veche e vutre!"
+                                            else:
+                                                inventory_db.log_action(inventory_uid, yolo_class, 'ADDED')
+                                                db_needs_update = True
+                                                status = f"SUCCESS: Vkarano!"
+
+                                        elif current_zone == "OUT":
+                                            if is_in_stock is False or is_in_stock is None:
+                                                status = f"ERROR: Ne e v sklada!"
+                                            else:
+                                                inventory_db.log_action(inventory_uid, yolo_class, 'REMOVED')
+                                                db_needs_update = True
+                                                status = f"SUCCESS: Izkarano!"
                                 
                                 processed_tracks[track_id] = {
                                     'status': status,
                                     'time': time.time(),
-                                    'uid': uid
+                                    'uid': inventory_uid,
+                                    'payload': payload
                                 }
 
                 # Визуално оформление (Feedback)
