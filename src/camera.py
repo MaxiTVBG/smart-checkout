@@ -21,15 +21,15 @@ class CameraStream:
             
         # Хардуерна оптимизация: Ограничаваме резолюцията до 640x480
         # YOLO не се нуждае от повече пиксели, а големите кадри сриват кадрите в секунда (FPS)
-        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
         # Четем първия кадър
         (self.grabbed, frame) = self.stream.read()
         if not self.grabbed or frame is None:
             raise RuntimeError(f"ГРЕШКА: Камерата на индекс {src} не връща валидни кадри! Смени 'camera_index' в config.yaml!")
             
-        self.frame = cv2.resize(frame, (640, 480))
+        self.frame = cv2.resize(frame, (1920, 1080))
         self.stopped = False
 
     def start(self):
@@ -44,7 +44,7 @@ class CameraStream:
             self.grabbed = grabbed
             # Гарантираме 640x480 дори ако камерата игнорира CAP_PROP!
             if grabbed and frame is not None:
-                self.frame = cv2.resize(frame, (640, 480))
+                self.frame = cv2.resize(frame, (1920, 1080))
 
     def read(self):
         # Връщаме статуса и последния заснет кадър
