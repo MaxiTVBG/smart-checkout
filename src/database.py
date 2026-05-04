@@ -44,7 +44,27 @@ class InventoryDatabase:
                 created_at DATETIME NOT NULL
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                rfid_uid TEXT PRIMARY KEY,
+                full_name TEXT NOT NULL
+            )
+        ''')
         self.conn.commit()
+
+    def is_user_valid(self, rfid_uid):
+        """Проверява дали даден RFID UID съответства на валиден потребител. Връща името или None."""
+        c = self.conn.cursor()
+        c.execute("SELECT full_name FROM users WHERE rfid_uid = ?", (rfid_uid,))
+        row = c.fetchone()
+        return row[0] if row else None
+    
+    def add_user(self, rfid_uid, full_name):
+        """Добавя нов потребител в базата данни."""
+        c = self.conn.cursor()
+        c.execute("INSERT OR REPLACE INTO users (rfid_uid, full_name) VALUES (?, ?)", (rfid_uid, full_name))
+        self.conn.commit()
+        print(f"Потребител '{full_name}' с UID '{rfid_uid}' е добавен/обновен.")
 
     def get_inventory_state(self):
         """Връща речник с наличностите (напр. {'class_name': 5})."""

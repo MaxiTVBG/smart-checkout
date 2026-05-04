@@ -64,6 +64,22 @@ def main():
     except Exception as e:
         print(e)
         return
+    
+    rfid_enable = config.get('raspberry', {}).get('rfid', False)
+    buzzer_enable = config.get('raspberry', {}).get('buzzer', False)
+    
+    rfid = None
+    buzzer = None
+
+    if rfid_enable:
+        print("Инициализация на RFID четец...")
+        from src.rfid_reader import RFIDReader
+        rfid = RFIDReader(rst_pin=config['raspberry']['rfid_rst_pin'])
+
+    if buzzer_enable:
+        print("Инициализация на buzzer...")
+        from src.buzzer import Buzzer
+        buzzer = Buzzer(pin=config['raspberry']['buzzer_pin'])
 
     # Състояние за Smart Counter
     track_history = {}    # { track_id: [(cx, cy), ...] }
@@ -71,6 +87,11 @@ def main():
     
     scan_cooldown = config['system'].get('scan_cooldown_sec', 1.0)
     headless = config['ui'].get('headless', False)
+
+    # Управление на сесията
+    current_user = "Guest" if not rfid_enable else None
+    session_timeout = 0
+    SESSION_LENGTH_SEC = 20.0
 
     print("Системата е готова (Smart Counter режим). Натисни 'q' за изход.")
 

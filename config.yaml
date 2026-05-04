@@ -9,8 +9,15 @@ paths:
 
 security:
   secret_env: 'SMART_CHECKOUT_CODE_SECRET'
+  secret_key: '0123456789012345678901234567890123'
 
 ui:
   headless: false
   dashboard_width: 200
   flash_frames: 15
+
+raspberry:
+  rfid: false
+  rfidrst_pin: 22
+  buzzer: false                      
+  buzzer_pin: 11
