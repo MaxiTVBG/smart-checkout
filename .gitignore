@@ -4,4 +4,10 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/
 
+# Sensitive config (use config.example.yaml as template)
+config.yaml

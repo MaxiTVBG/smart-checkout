@@ -1,0 +1,60 @@
+system:
+  camera_index: 0
+  line_margin: 20
+  scan_cooldown_sec: 1.0
+
+paths:
+  db_path: 'data/inventory.db'
+  yolo_model: 'models/new_checkout_ncnn_model'
+
+security:
+  secret_env: 'SMART_CHECKOUT_CODE_SECRET'
+
+ui:
+  headless: false
+  dashboard_width: 200
+  flash_frames: 15
+
+web_admin:
+  host: "0.0.0.0"       # 0.0.0.0 = all network interfaces, 127.0.0.1 = local only
+  port: 8000
+
+  roles:
+    admin:
+      permissions: ["*"]
+    manager:
+      permissions:
+        - view_dashboard
+        - view_inventory
+        - view_logs
+        - view_trace
+        - view_tables
+        - manual_add
+        - manual_remove
+        - manage_codes
+        - export_data
+    viewer:
+      permissions:
+        - view_dashboard
+        - view_inventory
+        - view_logs
+        - view_trace
+        - view_tables
+
+  users:
+    - token: "CHANGE_ME_admin_token"
+      role: admin
+    - token: "CHANGE_ME_viewer_token"
+      role: viewer
+
+  # Google OAuth (optional, for remote access from phones/tablets)
+  # 1. Create OAuth credentials at https://console.cloud.google.com
+  # 2. Add redirect URI: http://<your-ip>.nip.io:8000/auth/google/callback
+  # google_oauth:
+  #   client_id: "YOUR_CLIENT_ID.apps.googleusercontent.com"
+  #   client_secret: "YOUR_CLIENT_SECRET"
+  #   users:
+  #     - email: "admin@gmail.com"
+  #       role: admin
+  #     - email: "viewer@gmail.com"
+  #       role: viewer

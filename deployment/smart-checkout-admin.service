@@ -1,0 +1,13 @@
+[Unit]
+Description=Smart Checkout Admin Web Interface
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/smart-checkout
+ExecStart=/home/pi/smart-checkout/.venv/bin/python scripts/web_admin.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
