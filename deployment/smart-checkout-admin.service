@@ -1,0 +1,14 @@
+[Unit]
+Description=Smart Checkout Admin Web Interface
+After=network.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/smart-checkout
+Environment="SMART_CHECKOUT_ADMIN_TOKEN=change-this-token"
+ExecStart=/home/pi/smart-checkout/.venv/bin/python scripts/web_admin.py --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

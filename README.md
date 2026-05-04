@@ -61,3 +61,47 @@ python main.py
 ```
 
 Press `q` on the OpenCV window to exit.
+
+## 🗄️ Admin Web Interface
+
+The project includes a dependency-free SQLite web admin that runs on Raspberry Pi 5.
+It is read-only by default and shows inventory, movement logs, registered codes,
+generic table browsing, item tracing, CSV exports, and SELECT-only SQL queries.
+
+Run locally on the Pi:
+```bash
+python scripts/web_admin.py --host 127.0.0.1 --port 8000
+```
+
+Expose it to the local network with a token:
+```bash
+SMART_CHECKOUT_ADMIN_TOKEN='change-this-token' python scripts/web_admin.py --host 0.0.0.0 --port 8000
+```
+
+Open:
+```text
+http://raspberrypi.local:8000/?token=change-this-token
+```
+
+For systemd on Raspberry Pi, use `deployment/smart-checkout-admin.service` and
+change the token before enabling it.
+
+## 🔎 Database Tools
+
+Useful CLI reports and maintenance scripts:
+```bash
+python scripts/db_tools.py summary
+python scripts/db_tools.py logs --sort timestamp --limit 50
+python scripts/db_tools.py logs --action REMOVED --from 2026-04-30 --csv --out removed.csv
+python scripts/db_tools.py items --in-stock yes --sort item_class
+python scripts/db_tools.py trace led_box_BC418EA5
+python scripts/db_tools.py anomalies
+python scripts/db_tools.py schema
+python scripts/db_tools.py export-table logs --out logs.csv
+python scripts/db_tools.py backup
+```
+
+The tools are intentionally tolerant of future database columns such as
+`operator_id`, `session_id`, `source`, or NFC-backed `cash_sessions`; those fields
+will appear automatically in table views and CSV exports once your colleague adds
+them to the database.
