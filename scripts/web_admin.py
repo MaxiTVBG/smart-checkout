@@ -319,6 +319,29 @@ def make_handler(db_path: Path, web_cfg: dict[str, Any],
                 body = f"<div class='login-box'><h1>Server error</h1><pre class='error'>{h(exc)}</pre></div>"
                 self._send_html(self._layout("Error", "", body, role=role), HTTPStatus.INTERNAL_SERVER_ERROR)
 
+        def _log_auth_attempt(self, method: str, identifier: str, success: bool, role: str | None = None) -> None:
+            """Log authentication attempts to database."""
+            ip = self.client_address[0] if hasattr(self, "client_address") else "unknown"
+            try:
+                with self._connect_write() as conn:
+                    conn.execute(
+                        '''CREATE TABLE IF NOT EXISTS auth_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            method TEXT,
+                            identifier TEXT,
+                            success INTEGER,
+                            role TEXT,
+                            ip_address TEXT
+                        )'''
+                    )
+                    conn.execute(
+                        "INSERT INTO auth_logs (method, identifier, success, role, ip_address) VALUES (?, ?, ?, ?, ?)",
+                        (method, identifier, 1 if success else 0, role or "", ip)
+                    )
+            except Exception as e:
+                self.log_message(f"Failed to write to auth_logs: {e}")
+
         def _handle_login(self) -> None:
             """Authenticate token via POST, set HttpOnly session cookie, redirect to dashboard."""
             posted = self._read_post_body()
@@ -326,10 +349,12 @@ def make_handler(db_path: Path, web_cfg: dict[str, Any],
             role = token_to_role.get(token)
 
             if not role:
+                self._log_auth_attempt("token", token, False)
                 body = self._login_form(error=True)
                 self._send_html(self._layout("Login", "login", body, role=None), HTTPStatus.UNAUTHORIZED)
                 return
 
+            self._log_auth_attempt("token", token, True, role)
             cookie_value = _sign_cookie(role, session_secret)
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", "/")
@@ -410,6 +435,7 @@ def make_handler(db_path: Path, web_cfg: dict[str, Any],
             role = oauth_email_to_role.get(email)
 
             if not role:
+                self._log_auth_attempt("google", email, False)
                 self._send_html(self._layout("Access Denied", "",
                     f"<div class='login-box'><h1>Access Denied</h1>"
                     f"<p style='margin-top:16px;'>The account <strong>{h(email)}</strong> is not authorized.</p>"
@@ -418,6 +444,7 @@ def make_handler(db_path: Path, web_cfg: dict[str, Any],
                     role=None), HTTPStatus.FORBIDDEN)
                 return
 
+            self._log_auth_attempt("google", email, True, role)
             cookie_value = _sign_cookie(role, session_secret)
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", "/")
@@ -881,10 +908,84 @@ def make_handler(db_path: Path, web_cfg: dict[str, Any],
               </div>
               <a href="{export_url}">Export CSV</a>
             </div>
+            </div>
             {self._table_filters(table, params)}
-            <section><h2>Rows</h2>{table_html(result["rows"], result["columns"], trace_links=True, url=self._url)}</section>
+            <section><h2>Rows</h2>{table_html(
+                result["rows"], 
+                result["columns"], 
+                trace_links=True, 
+                url=self._url, 
+                table_name=table, 
+                can_manage_users=_has_perm(role, "manage_users"),
+                existing_users={"google": oauth_email_to_role, "token": token_to_role}
+            )}</section>
             <section><h2>Schema</h2>{table_html(schema, ["cid","name","type","notnull","dflt_value","pk"])}</section>
             """
+            
+            if table == "auth_logs" and _has_perm(role, "manage_users"):
+                role_options = "".join(f'<option value="{h(rn)}">{h(rn)}</option>' for rn in roles_def.keys())
+                body += f"""
+                <dialog id="userModal" style="border:1px solid var(--line); border-radius:var(--radius); padding:24px; box-shadow:var(--shadow); width:100%; max-width:400px; background:var(--surface);">
+                  <form method="dialog" style="float:right; margin-top:-10px; margin-right:-10px;">
+                    <button style="border:none;background:none;font-size:20px;cursor:pointer;">✕</button>
+                  </form>
+                  <h3 style="margin-top:0;" id="userModalTitle">Modify User</h3>
+                  <div id="userModalCurrentRole" style="margin-bottom:16px;" class="muted"></div>
+                  
+                  <form id="userModalForm" method="post" action="/action/change_role">
+                    <input type="hidden" name="auth_type" id="userModalAuthType">
+                    <input type="hidden" name="user_type" id="userModalUserType">
+                    <input type="hidden" name="user_id" id="userModalUserId">
+                    <input type="hidden" name="email" id="userModalEmail">
+                    <input type="hidden" name="token" id="userModalToken">
+                    
+                    <div class="input-group">
+                      <label>Assign Role</label>
+                      <select name="role" id="userModalRoleSelect" style="width:100%; padding:8px; border:1px solid var(--line); border-radius:4px;">
+                        {role_options}
+                      </select>
+                    </div>
+                    
+                    <div style="display:flex;gap:12px;margin-top:24px;">
+                      <button type="submit" class="btn-primary" id="userModalSaveBtn" style="flex:1;">Save</button>
+                      <button type="button" class="btn-action remove" id="userModalRemoveBtn" style="flex:1; justify-content:center;" onclick="document.getElementById('userModalForm').action='/action/remove_user'; document.getElementById('userModalForm').submit();">Remove Access</button>
+                    </div>
+                  </form>
+                </dialog>
+                <script>
+                  function openUserModal(action, method, identifier, currentRole) {{
+                      const dialog = document.getElementById('userModal');
+                      const form = document.getElementById('userModalForm');
+                      
+                      document.getElementById('userModalAuthType').value = method;
+                      document.getElementById('userModalUserType').value = method;
+                      document.getElementById('userModalUserId').value = identifier;
+                      document.getElementById('userModalEmail').value = identifier;
+                      document.getElementById('userModalToken').value = identifier;
+                      
+                      const roleText = document.getElementById('userModalCurrentRole');
+                      const removeBtn = document.getElementById('userModalRemoveBtn');
+                      const title = document.getElementById('userModalTitle');
+                      const roleSelect = document.getElementById('userModalRoleSelect');
+                      
+                      if (action === 'add') {{
+                          title.innerText = "Add: " + identifier;
+                          form.action = '/action/add_user';
+                          roleText.innerText = "Not in system.";
+                          removeBtn.style.display = 'none';
+                          roleSelect.value = 'viewer';
+                      }} else {{
+                          title.innerText = "Modify: " + identifier;
+                          form.action = '/action/change_role';
+                          roleText.innerText = "Current role: " + currentRole;
+                          roleSelect.value = currentRole;
+                          removeBtn.style.display = 'flex';
+                      }}
+                      dialog.showModal();
+                  }}
+                </script>
+                """
+
             self._send_html(self._layout("Table", "tables", body, role=role))
 
         def _sql(self, params: dict[str, str], role: str) -> None:
@@ -1342,13 +1443,21 @@ def table_html(
     trace_links: bool = False,
     table_links: bool = False,
     url=None,
+    table_name: str = "",
+    can_manage_users: bool = False,
+    existing_users: dict[str, dict[str, str]] | None = None,
 ) -> str:
     columns = columns or columns_from_rows(rows)
     if not columns:
         return "<p class='muted' style='padding:16px;'>No columns.</p>"
     if not rows:
         return "<p class='muted' style='padding:16px;'>No rows.</p>"
+    
+    show_auth_actions = table_name == "auth_logs" and can_manage_users
     head = "".join(f"<th>{h(col)}</th>" for col in columns)
+    if show_auth_actions:
+        head += "<th>Actions</th>"
+
     body_rows = []
     for row in rows:
         cells = []
@@ -1368,6 +1477,24 @@ def table_html(
             elif col == "severity" and value == "warning":
                 cell = '<span class="status neutral">WARN</span>'
             cells.append(f"<td>{cell}</td>")
+        
+        if show_auth_actions:
+            method = row.get("method")
+            identifier = row.get("identifier")
+            btn = ""
+            if method in ("google", "token") and identifier:
+                current_role = ""
+                if existing_users:
+                    users_dict = existing_users.get(method, {})
+                    lookup_id = identifier if method == "token" else identifier.lower()
+                    current_role = users_dict.get(lookup_id, "")
+                
+                if current_role:
+                    btn = f'''<button type="button" class="btn-action neutral" onclick="openUserModal('modify', '{h(method)}', '{h(identifier)}', '{h(current_role)}')">Modify</button>'''
+                else:
+                    btn = f'''<button type="button" class="btn-action add" onclick="openUserModal('add', '{h(method)}', '{h(identifier)}', '')">Add</button>'''
+            cells.append(f"<td>{btn}</td>")
+
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
     return f"<div class='table-wrap'><table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
 
