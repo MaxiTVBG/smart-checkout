@@ -25,7 +25,7 @@
 
 import spidev
 import time
-from gpiozero import OutputDevice
+import RPi.GPIO as GPIO
 from typing import List, Tuple, Optional
 
 DEBUG = False
@@ -122,7 +122,7 @@ class MFRC522:
     TestDAC2Reg     = 0x3A
     TestADCReg      = 0x3B
 
-    def __init__(self, bus: int = 0, dev: int = 0, spd: int = 100000, rst_pin: int = 25) -> None:
+    def __init__(self, bus: int = 0, dev: int = 0, spd: int = 100000, rst_pin: int = 22) -> None:
         """
         Initializes the MFRC522 reader.
 
@@ -130,7 +130,9 @@ class MFRC522:
         :param dev: SPI device number (default=0).
         :param spd: SPI speed in Hz (default=1,000,000).
         """
-        self.rst = OutputDevice(rst_pin)
+        self.rst_pin = rst_pin
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.rst_pin, GPIO.OUT)
         
         # 2. Perform the hard reset FIRST
         self.hard_reset()
@@ -143,14 +145,11 @@ class MFRC522:
     # --- Core SPI Communication Methods ---
 
     def hard_reset(self) -> None:
-        """
-        Performs a physical hardware reset using the Pi's GPIO pin.
-        This wakes up a frozen MFRC522 chip when SPI soft-resets fail.
-        """
-        self.rst.off()   # Pull LOW to put the chip into reset mode
-        time.sleep(0.05) # Wait 50ms
-        self.rst.on()    # Pull HIGH to wake it up
-        time.sleep(0.05) # Wait 50ms for the chip to stabilize
+
+        GPIO.output(self.rst_pin, GPIO.LOW)  # Pull LOW (Reset)
+        time.sleep(0.05)                     # Wait 50ms
+        GPIO.output(self.rst_pin, GPIO.HIGH) # Pull HIGH (Wake up)
+        time.sleep(0.05)                     # Wait 50ms stabilization
 
     def _write_reg(self, addr: int, val: int) -> None:
         """

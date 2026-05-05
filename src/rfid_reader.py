@@ -6,11 +6,11 @@ import threading
 from . import MFRC522
 
 class RFIDReader:
-    def __init__(self):
+    def __init__(self, rst_pin):
         """
         Initializes the MFRC522 reader and starts the background scanning thread.
         """
-        self.reader = MFRC522.MFRC522(rst_pin=22)
+        self.reader = MFRC522.MFRC522(rst_pin=rst_pin)
         self._last_uid = None
         self._running = True
         self.failures = 0
