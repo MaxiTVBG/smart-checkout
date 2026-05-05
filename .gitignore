@@ -11,3 +11,5 @@ data/backups/
 
 # Sensitive config (use config.example.yaml as template)
 config.yaml
+*.bak
+backups/
