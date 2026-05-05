@@ -45,10 +45,67 @@ def connect_writable(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
+    # Enforce WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
+def trigger_webhook(event: str, payload: dict[str, Any]) -> None:
+    config_file = Path("config.yaml")
+    if not config_file.exists():
+        return
+    try:
+        import yaml
+        import requests
+        config = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        webhook_url = config.get("webhooks", {}).get("url")
+        if not webhook_url:
+            return
+        
+        data = {
+            "event": event,
+            "data": payload,
+            "timestamp": _dt.datetime.now().isoformat()
+        }
+        # Send webhook asynchronously or in background
+        # For simplicity, we just send it with a short timeout here.
+        requests.post(webhook_url, json=data, timeout=2.0)
+    except Exception as e:
+        print(f"Failed to send webhook: {e}")
 
-def manual_add_item(conn: sqlite3.Connection, uid: str, item_class: str) -> str:
+def log_admin_action(conn: sqlite3.Connection, action_type: str, entity_id: str, user: dict[str, str], details: str = "") -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS admin_audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            user_method TEXT NOT NULL,
+            user_identifier TEXT NOT NULL,
+            user_role TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            entity_id TEXT,
+            details TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO admin_audit_logs 
+        (timestamp, user_method, user_identifier, user_role, action_type, entity_id, details)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            _dt.datetime.now().isoformat(),
+            user.get("method", "unknown"),
+            user.get("identifier", "unknown"),
+            user.get("role", "unknown"),
+            action_type,
+            entity_id,
+            details
+        )
+    )
+
+
+def manual_add_item(conn: sqlite3.Connection, uid: str, item_class: str, user: dict[str, str]) -> str:
     """Manually mark an item as ADDED (in stock). Returns status message."""
     uid = uid.strip()
     item_class = item_class.strip()
@@ -72,11 +129,16 @@ def manual_add_item(conn: sqlite3.Connection, uid: str, item_class: str) -> str:
         "INSERT INTO logs (uid, action, timestamp) VALUES (?, 'ADDED', ?)",
         (uid, _dt.datetime.now().isoformat()),
     )
+    log_admin_action(conn, "MANUAL_ADD", uid, user, f"Class: {item_class}")
     conn.commit()
+    
+    # Trigger Webhook if needed
+    trigger_webhook("item_added", {"uid": uid, "class": item_class, "user": user.get("identifier")})
+    
     return f"Item '{uid}' added to inventory."
 
 
-def manual_remove_item(conn: sqlite3.Connection, uid: str) -> str:
+def manual_remove_item(conn: sqlite3.Connection, uid: str, user: dict[str, str]) -> str:
     """Manually mark an item as REMOVED (out of stock). Returns status message."""
     uid = uid.strip()
     if not uid:
@@ -93,11 +155,16 @@ def manual_remove_item(conn: sqlite3.Connection, uid: str) -> str:
         "INSERT INTO logs (uid, action, timestamp) VALUES (?, 'REMOVED', ?)",
         (uid, _dt.datetime.now().isoformat()),
     )
+    log_admin_action(conn, "MANUAL_REMOVE", uid, user, f"Class: {row['item_class']}")
     conn.commit()
+    
+    # Trigger Webhook
+    trigger_webhook("item_removed", {"uid": uid, "class": row["item_class"], "user": user.get("identifier")})
+    
     return f"Item '{uid}' removed from inventory."
 
 
-def toggle_code_active(conn: sqlite3.Connection, public_uid: str) -> str:
+def toggle_code_active(conn: sqlite3.Connection, public_uid: str, user: dict[str, str]) -> str:
     """Toggle a registered code's active status. Returns status message."""
     public_uid = public_uid.strip()
     row = conn.execute(
@@ -110,6 +177,8 @@ def toggle_code_active(conn: sqlite3.Connection, public_uid: str) -> str:
         "UPDATE registered_codes SET active = ? WHERE public_uid = ?",
         (new_status, public_uid),
     )
+    action_type = "CODE_ACTIVATE" if new_status == 1 else "CODE_DEACTIVATE"
+    log_admin_action(conn, action_type, public_uid, user)
     conn.commit()
     label = "activated" if new_status == 1 else "deactivated"
     return f"Code '{public_uid}' {label}."

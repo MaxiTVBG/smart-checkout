@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Users - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <h1>User Management</h1>
+  <span class="status neutral">{{ total_users }} Users</span>
+</div>
+
+<div class="grid two">
+  <div>
+    <section><h2>Access Tokens</h2>{{ tokens_table | safe }}</section>
+  </div>
+  <div>
+    <section><h2>Google OAuth</h2>{{ oauth_table | safe }}</section>
+  </div>
+</div>
+
+<details class="action-panel" style="margin-top:24px;">
+  <summary>+ Add / Modify User</summary>
+  <div style="padding: 0 20px 20px;">
+    <form method="post" action="/action/change_role" class="action-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="input-group" style="flex:1;">
+        <label>Type</label>
+        <select name="user_type">
+          <option value="token">Token</option>
+          <option value="google">Google OAuth Email</option>
+        </select>
+      </div>
+      <div class="input-group" style="flex:1.5;">
+        <label>Identifier (Token or Email)</label>
+        <input name="user_id" required>
+      </div>
+      <div class="input-group" style="flex:1;">
+        <label>Role</label>
+        <select name="role">
+          {{ role_options | safe }}
+        </select>
+      </div>
+      <button type="submit" class="btn-action neutral" style="margin-bottom:12px;">Update</button>
+    </form>
+    <hr style="border:none; border-top:1px solid var(--line); margin: 16px 0;">
+    <form method="post" action="/action/remove_user" class="action-form" style="padding:0;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="input-group" style="flex:1;">
+        <label>Type</label>
+        <select name="user_type">
+          <option value="token">Token</option>
+          <option value="google">Google OAuth Email</option>
+        </select>
+      </div>
+      <div class="input-group" style="flex:1.5;">
+        <label>Identifier to Remove</label>
+        <input name="user_id" required>
+      </div>
+      <button type="submit" class="btn-action remove" style="margin-bottom:12px;" onclick="return confirm('Remove this user completely?')">Remove Access</button>
+    </form>
+  </div>
+</details>
+
+<section><h2>Roles Overview</h2>{{ roles_table | safe }}</section>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Tables - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <h1>{{ table_name | default("Tables") }}</h1>
+    {% if total_rows is defined %}
+    <span class="status neutral">{{ total_rows }} rows</span>
+    {% endif %}
+  </div>
+  {% if export_url %}
+  <a href="{{ export_url }}">Export CSV</a>
+  {% endif %}
+</div>
+
+{% if filters_html %}
+{{ filters_html | safe }}
+{% endif %}
+
+{% if table_name %}
+<section><h2>Rows</h2>{{ table_html | safe }}</section>
+<section><h2>Schema</h2>{{ schema_html | safe }}</section>
+
+{% if modal_html %}
+{{ modal_html | safe }}
+{% endif %}
+
+{% else %}
+{{ table_html | safe }}
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Inventory - Smart Checkout{% endblock %}
+
+{% block extra_head %}
+<script src="https://unpkg.com/html5-qrcode"></script>
+{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <h1>Inventory</h1>
+  <span class="status neutral">{{ total_rows }} rows</span>
+</div>
+
+{% if can_add %}
+<details class="action-panel" id="addPanel">
+  <summary>+ Manual Add Item</summary>
+  <div style="padding: 0 20px 20px;">
+    <div id="reader" style="width: 100%; max-width: 400px; margin-bottom: 16px; display: none;"></div>
+    <button type="button" class="btn-action neutral" id="scanBtn" style="margin-bottom: 16px;">📷 Scan QR/Barcode</button>
+    
+    <form method="post" action="/action/add" class="action-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="input-group" style="flex:1;">
+        <label>Select registered code</label>
+        <select name="uid" id="add-uid-select" onchange="var o=this.options[this.selectedIndex]; document.getElementById('add-class').value=o.dataset.class||'';">
+          <option value="">— or type/scan UID below —</option>
+          {{ add_options | safe }}
+        </select>
+      </div>
+      <div class="input-group" style="flex:1;">
+        <label>Or enter UID manually</label>
+        <input name="uid" placeholder="UID" id="add-uid-manual">
+      </div>
+      <div class="input-group" style="flex:0.6;">
+        <label>Class (auto-filled)</label>
+        <input name="item_class" id="add-class" placeholder="Auto" readonly>
+      </div>
+      <button type="submit" class="btn-action add" onclick="return confirm('Add this item to inventory?')">Add</button>
+    </form>
+  </div>
+</details>
+
+<script>
+document.getElementById('scanBtn').addEventListener('click', function() {
+    const readerDiv = document.getElementById('reader');
+    if (readerDiv.style.display === 'block') {
+        readerDiv.style.display = 'none';
+        return;
+    }
+    readerDiv.style.display = 'block';
+    
+    const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 });
+    html5QrcodeScanner.render(function(decodedText, decodedResult) {
+        document.getElementById('add-uid-manual').value = decodedText;
+        document.getElementById('add-uid-select').value = "";
+        html5QrcodeScanner.clear();
+        readerDiv.style.display = 'none';
+        
+        // Auto-submit or just fill? We will just fill so user can select class if needed.
+    }, function(error) {
+        // silently ignore scanning errors (happens when no barcode found in frame)
+    });
+});
+</script>
+{% endif %}
+
+{{ item_filters_html | safe }}
+
+{{ table_html | safe }}
+{% endblock %}

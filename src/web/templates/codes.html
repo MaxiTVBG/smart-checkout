@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Codes - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <h1>Registered Codes</h1>
+  <span class="status neutral">{{ total_rows }} codes</span>
+</div>
+
+{% if can_edit %}
+<details class="action-panel">
+  <summary>+ Add New Code</summary>
+  <div style="padding: 0 20px 20px;">
+    <form method="post" action="/action/add_code" class="action-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="input-group" style="flex:1;">
+        <label>UID Pattern / Prefix</label>
+        <input name="uid" placeholder="e.g. SN1234 or SN*" required>
+      </div>
+      <div class="input-group" style="flex:1;">
+        <label>Class Name</label>
+        <input name="item_class" placeholder="e.g. Laptop, Keyboard" required>
+      </div>
+      <button type="submit" class="btn-action add">Register</button>
+    </form>
+  </div>
+</details>
+{% endif %}
+
+{{ filters_html | safe }}
+{{ table_html | safe }}
+{% endblock %}

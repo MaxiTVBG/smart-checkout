@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}SQL Terminal - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <h1>SQL Terminal</h1>
+  <span class="status neutral">SELECT Only</span>
+</div>
+
+<form class="sql-form" method="post" action="/sql">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <textarea name="sql" spellcheck="false" placeholder="Enter your SQL query here...">{{ sql }}</textarea>
+  <button type="submit" class="btn-primary" style="width:120px;">Run Query</button>
+</form>
+
+<div style="margin-top:24px;">
+  {% if error %}
+  <div class='metric error' style='margin-bottom:16px;'>{{ error }}</div>
+  {% endif %}
+  
+  {% if result_html %}
+    {% if truncated %}
+    <p class='muted' style='margin-bottom:10px;'>Result truncated to 300 rows.</p>
+    {% endif %}
+    {{ result_html | safe }}
+  {% endif %}
+</div>
+{% endblock %}

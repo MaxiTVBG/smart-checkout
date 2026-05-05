@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Trace - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class='section-head'>
+  <h1>Trace item</h1>
+  {% if trace %}
+  <span class="status {{ trace.current_status }}">{{ trace.current_status | upper }}</span>
+  {% endif %}
+</div>
+
+<form class="filters" method="get" action="/trace">
+  <div style="flex-grow:1;">
+    <label>UID Trace Query</label>
+    <input name="uid" value="{{ uid }}" placeholder="Search by UID..." style="width:100%;">
+  </div>
+  <button type="submit" class="btn-primary" style="width:auto;">Trace</button>
+</form>
+
+{% if trace %}
+<p class="muted" style="margin-bottom:20px;">Candidates found: {{ trace.candidate_uids | join(', ') if trace.candidate_uids else 'None' }}</p>
+
+<section><h2>Item</h2>{{ item_html | safe }}</section>
+<section><h2>Registered code</h2>{{ code_html | safe }}</section>
+<section><h2>Timeline</h2>{{ timeline_html | safe }}</section>
+<section>
+  <h2>Trace checks</h2>
+  {% if anomaly_html %}
+    {{ anomaly_html | safe }}
+  {% else %}
+    <p class='muted' style='padding:16px;'>No trace anomalies.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

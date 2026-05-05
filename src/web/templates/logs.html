@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Movements - Smart Checkout{% endblock %}
+
+{% block content %}
+<div class="section-head">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <h1>Movements</h1>
+    <span class="status neutral">{{ total_rows }} matching</span>
+  </div>
+  <a href="{{ export_url }}">Export CSV</a>
+</div>
+
+{{ filters_html | safe }}
+
+{{ table_html | safe }}
+{% endblock %}

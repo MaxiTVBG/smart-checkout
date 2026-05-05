@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Smart Checkout{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<section class="metrics">
+  <div class='metric'><span>In stock</span><strong>{{ summary.in_stock_items }}</strong></div>
+  <div class='metric'><span>Out</span><strong>{{ summary.out_stock_items }}</strong></div>
+  <div class='metric'><span>Logs today</span><strong>{{ summary.today_added + summary.today_removed }}</strong></div>
+  <div class='metric'><span>Registered</span><strong>{{ summary.registered_codes }}</strong></div>
+</section>
+
+<section class="grid two">
+  <div>
+    <div class="section-head"><h2>Stock by class</h2><a href="/items">Open</a></div>
+    {{ inventory_html | safe }}
+  </div>
+  <div>
+    <div class="section-head"><h2>Active cash session</h2></div>
+    {{ session_html | safe }}
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Movements Today</h2></div>
+  <div class="card" style="padding: 20px;">
+    <canvas id="movementsChart" height="100"></canvas>
+  </div>
+</section>
+
+<section>
+  <div class="section-head"><h2>Recent movements</h2><a href="/logs">Open all</a></div>
+  {{ recent_html | safe }}
+</section>
+
+<section>
+  <div class="section-head"><h2>Checks</h2><a href="/sql">SQL</a></div>
+  {{ anomaly_html | safe }}
+</section>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const ctx = document.getElementById('movementsChart').getContext('2d');
+    
+    // We will inject the chart data from FastAPI context
+    const labels = {{ chart_labels | tojson | default('[]') }};
+    const addedData = {{ chart_added | tojson | default('[]') }};
+    const removedData = {{ chart_removed | tojson | default('[]') }};
+    
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Items Added',
+                    data: addedData,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    tension: 0.3,
+                    fill: true
+                },
+                {
+                    label: 'Items Removed',
+                    data: removedData,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    tension: 0.3,
+                    fill: true
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'top' }
+            },
+            scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
