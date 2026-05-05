@@ -17,7 +17,7 @@ ui:
   flash_frames: 15
 
 raspberry:
-  rfid: true
+  rfid: false
   rfid_rst_pin: 22
   buzzer: false                      
   buzzer_pin: 11

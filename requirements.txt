@@ -3,3 +3,6 @@ ultralytics>=8.4.0
 pyzbar>=0.1.9
 pylibdmtx>=0.1.10
 pyyaml>=6.0.0
+numpy>=2.4.4
+rpi-lgpio>=0.2.2.0
+spidev>=3.8
