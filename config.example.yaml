@@ -50,11 +50,11 @@ web_admin:
   # Google OAuth (optional, for remote access from phones/tablets)
   # 1. Create OAuth credentials at https://console.cloud.google.com
   # 2. Add redirect URI: http://<your-ip>.nip.io:8000/auth/google/callback
-  # google_oauth:
-  #   client_id: "YOUR_CLIENT_ID.apps.googleusercontent.com"
-  #   client_secret: "YOUR_CLIENT_SECRET"
-  #   users:
-  #     - email: "admin@gmail.com"
-  #       role: admin
-  #     - email: "viewer@gmail.com"
-  #       role: viewer
+  google_oauth:
+    client_id: "YOUR_CLIENT_ID.apps.googleusercontent.com"
+    client_secret: "YOUR_CLIENT_SECRET"
+    users:
+      - email: "admin@gmail.com"
+        role: admin
+      - email: "viewer@gmail.com"
+        role: viewer
