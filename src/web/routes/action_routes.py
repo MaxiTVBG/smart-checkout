@@ -1,3 +1,5 @@
+import datetime
+import sqlite3
 import urllib.parse
 from fastapi import APIRouter, Request, Depends, Form, HTTPException, status
 from fastapi.responses import RedirectResponse
@@ -9,6 +11,7 @@ from ...admin_queries import (
     manual_remove_item,
     toggle_code_active
 )
+from ...secure_codes import SecureCodeError, create_secure_payload, load_code_secret, verify_secure_payload
 from ..auth import require_auth, _has_perm, validate_csrf, load_config, save_config
 
 router = APIRouter()
@@ -80,24 +83,39 @@ async def action_add_code(
     if not _has_perm(user["role"], "manage_codes"):
         raise HTTPException(status_code=403, detail="Forbidden")
         
-    uid = uid.strip()
+    uid = uid.strip().upper()
     item_class = item_class.strip()
     if not uid or not item_class:
         return _redirect_back(request, "UID and Class are required.", is_error=True)
-        
+
+    try:
+        secret = load_code_secret(load_config())
+        payload = create_secure_payload(item_class, secret, public_uid=uid)
+        secure_code = verify_secure_payload(payload, secret)
+    except SecureCodeError as e:
+        return _redirect_back(request, f"Invalid code: {e}", is_error=True)
+
     db_path = resolve_db_path()
     try:
         with connect_writable(db_path) as conn:
-            # We don't have a direct function in admin_queries for ADD code, 
-            # so we'll do it manually here and call log_admin_action
             from ...admin_queries import log_admin_action
             conn.execute(
-                "INSERT INTO registered_codes (public_uid, item_class, active, created_at) VALUES (?, ?, 1, datetime('now'))",
-                (uid, item_class)
+                """
+                INSERT INTO registered_codes (public_uid, payload, item_class, active, created_at)
+                VALUES (?, ?, ?, 1, ?)
+                """,
+                (
+                    secure_code.public_uid,
+                    secure_code.payload,
+                    secure_code.item_class,
+                    datetime.datetime.now().isoformat(),
+                )
             )
-            log_admin_action(conn, "ADD_CODE", uid, user, f"Class: {item_class}")
+            log_admin_action(conn, "ADD_CODE", secure_code.public_uid, user, f"Class: {secure_code.item_class}")
             conn.commit()
-        return _redirect_back(request, f"Code '{uid}' registered.")
+        return _redirect_back(request, f"Code '{secure_code.public_uid}' registered.")
+    except sqlite3.IntegrityError:
+        return _redirect_back(request, f"Code '{secure_code.public_uid}' already exists.", is_error=True)
     except Exception as e:
         return _redirect_back(request, f"Error adding code: {e}", is_error=True)
 
@@ -220,3 +238,23 @@ async def action_remove_user(
         return _redirect_back(request, f"User {u_id} removed.")
     else:
         return _redirect_back(request, f"User {u_id} not found.", is_error=True)
+
+
+@router.post("/action/toggle_code")
+async def action_toggle_code(
+    request: Request,
+    csrf_token: str = Form(...),
+    public_uid: str = Form(...),
+    user: dict = Depends(require_auth)
+):
+    validate_csrf(request, csrf_token)
+    if not _has_perm(user["role"], "manage_codes"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    db_path = resolve_db_path()
+    try:
+        with connect_writable(db_path) as conn:
+            msg = toggle_code_active(conn, public_uid, user)
+        return _redirect_back(request, msg)
+    except Exception as e:
+        return _redirect_back(request, str(e), is_error=True)

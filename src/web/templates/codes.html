@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Codes - Smart Checkout{% endblock %}
+{% block page_name %}Codes{% endblock %}
 
 {% block content %}
 <div class="section-head">
@@ -10,24 +11,44 @@
 
 {% if can_edit %}
 <details class="action-panel">
-  <summary>+ Add New Code</summary>
+  <summary>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Add New Code
+  </summary>
   <div style="padding: 0 20px 20px;">
     <form method="post" action="/action/add_code" class="action-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="input-group" style="flex:1;">
-        <label>UID Pattern / Prefix</label>
-        <input name="uid" placeholder="e.g. SN1234 or SN*" required>
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <input name="uid" id="add-code-uid" placeholder=" " required>
+        <label for="add-code-uid">Public UID (8-32 uppercase letters or digits)</label>
       </div>
-      <div class="input-group" style="flex:1;">
-        <label>Class Name</label>
-        <input name="item_class" placeholder="e.g. Laptop, Keyboard" required>
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <input name="item_class" id="add-code-class" placeholder=" " required>
+        <label for="add-code-class">Class Name (e.g. Laptop, Keyboard)</label>
       </div>
-      <button type="submit" class="btn-action add">Register</button>
+      <button type="submit" class="btn-action add" style="padding:12px 24px;">Register</button>
     </form>
   </div>
 </details>
 {% endif %}
 
 {{ filters_html | safe }}
+
+<div class="table-wrap">
 {{ table_html | safe }}
+</div>
+
+{% if can_edit %}
+<script>
+function toggleCode(uid) {
+  if (!confirm('Toggle active status for code "' + uid + '"?')) return;
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/action/toggle_code';
+  form.innerHTML = '<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="public_uid" value="' + uid + '">';
+  document.body.appendChild(form);
+  form.submit();
+}
+</script>
+{% endif %}
 {% endblock %}

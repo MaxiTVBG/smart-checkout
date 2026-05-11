@@ -1,42 +1,112 @@
-# Smart Checkout Tracker
+<p align="center">
+  <img src="https://img.shields.io/badge/Platform-Raspberry%20Pi%205-c51a4a?style=for-the-badge&logo=raspberrypi&logoColor=white" alt="RPi 5"/>
+  <img src="https://img.shields.io/badge/Resolution-1080p-00cec9?style=for-the-badge" alt="1080p"/>
+  <img src="https://img.shields.io/badge/AI-YOLOv8%20NCNN-6c5ce7?style=for-the-badge" alt="YOLO"/>
+  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
+</p>
 
-Professional Computer Vision system for inventory management using YOLO, ByteTrack, DataMatrix/QR codes, and SQLite.
+# 🛒 Smart Checkout
 
-## 📋 Features
-- **Real-Time Object Tracking**: Ultralytics YOLO & ByteTrack for detecting and counting items.
-- **Secure DataMatrix Support**: HMAC-signed Data Matrix payloads with local registry validation.
-- **Anti-Spoofing**: Ensures visually detected classes match registered signed codes.
-- **SQLite Inventory DB**: Uses WAL mode for fast, concurrent stock tracking.
-- **Web Admin Panel**: Full-featured dashboard with role-based access, Google OAuth, and live management.
-- **Runs on Raspberry Pi 5**: Optimized for headless deployment with NCNN inference.
+**AI-powered inventory tracking system** built for Raspberry Pi 5. Uses real-time computer vision (YOLOv8 + ByteTrack) and cryptographically signed DataMatrix codes to track items entering and leaving a checkout zone — all at 1080p resolution.
 
-## 🛠️ Project Structure
+---
+
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Real-Time Object Tracking** | YOLOv8 with ByteTrack for persistent object identification across frames |
+| 📷 **1080p Pipeline** | Full HD capture with async inference — no resolution compromise |
+| 🔐 **HMAC-Signed DataMatrix** | Each item carries a cryptographically signed code — prevents spoofing |
+| 🛡️ **Anti-Spoofing** | Cross-validates YOLO visual class against the signed code's class |
+| 🗄️ **SQLite with WAL** | Write-Ahead Logging optimized for SD card longevity on RPi |
+| 🌐 **Web Admin Panel** | Full dashboard with RBAC, Google OAuth, inventory management, and SQL console |
+| 🔄 **NFC State Machine** | LOCKED/ACTIVE states — integrates with external NFC access control |
+| ⚡ **Async Architecture** | Threaded YOLO inference + non-blocking DataMatrix scanner = smooth 30+ FPS HUD |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│  USB Camera  │────▶│  CameraStream    │────▶│   Main Loop     │
+│  1080p/30fps │     │  (background     │     │   (HUD @ 30fps) │
+└──────────────┘     │   thread)        │     └────────┬────────┘
+                     └──────────────────┘              │
+                                                       ▼
+                     ┌──────────────────┐     ┌─────────────────┐
+                     │  YOLOPipeline    │◀────│  Frame Submit   │
+                     │  (worker thread) │     │  (skip if busy) │
+                     └───────┬──────────┘     └─────────────────┘
+                             │
+                             ▼
+                     ┌──────────────────┐     ┌─────────────────┐
+                     │  AsyncScanner    │────▶│  SQLite WAL DB  │
+                     │  (ThreadPool)    │     │  (thread-safe)  │
+                     └──────────────────┘     └─────────────────┘
+```
+
+---
+
+## 📂 Project Structure
+
 ```
 smart-checkout/
-├── config.example.yaml  # Config template (copy to config.yaml)
-├── main.py              # Main tracker (YOLO + camera)
-├── requirements.txt     # Python dependencies
-├── data/                # SQLite database (auto-created)
-├── models/              # YOLO NCNN models
+├── main.py                    # Main vision loop (async YOLO + scanner)
+├── config.example.yaml        # Configuration template
+├── setup.sh                   # RPi 5 one-click setup script
+├── checkout.service           # systemd unit for auto-start
+├── deploy.md                  # RPi 5 deployment checklist
+├── requirements.txt           # Python dependencies
+│
+├── src/
+│   ├── camera.py              # 1080p threaded capture with auto-reconnect
+│   ├── database.py            # Thread-safe SQLite with WAL optimization
+│   ├── scanner.py             # DataMatrix/QR decoder (adaptive threshold)
+│   ├── secure_codes.py        # HMAC payload signing & verification
+│   ├── ui.py                  # OpenCV HUD (optimized sub-ROI overlay)
+│   ├── admin_queries.py       # Admin panel query engine
+│   └── web/
+│       ├── app.py             # FastAPI application
+│       ├── auth.py            # RBAC + Google OAuth
+│       ├── utils.py           # HTML rendering utilities
+│       ├── routes/
+│       │   ├── auth_routes.py
+│       │   ├── page_routes.py
+│       │   └── action_routes.py
+│       └── templates/         # Jinja2 HTML templates
+│
 ├── scripts/
-│   ├── web_admin.py     # Web admin server
-│   ├── db_tools.py      # CLI database tools
-│   └── generate_datamatrix.py
-├── src/                 # Core logic modules
-│   ├── database.py      # SQLite operations
-│   ├── admin_queries.py # Admin query engine
-│   ├── scanner.py       # QR & DataMatrix scanner
-│   ├── secure_codes.py  # HMAC code validation
-│   └── ui.py            # OpenCV HUD
-├── deployment/          # systemd service files for Raspberry Pi
+│   ├── web_admin.py           # Start web admin server
+│   ├── db_tools.py            # CLI database tools
+│   ├── generate_datamatrix.py # Generate signed DataMatrix codes
+│   ├── backup_db.py           # Database backup utility
+│   ├── export_model.py        # YOLO → NCNN model export
+│   └── capture_data.py        # Training data capture
+│
+├── models/                    # YOLO NCNN models
+├── data/                      # SQLite database (auto-created)
+├── datamatrix_codes/          # Generated DataMatrix images
 └── tests/
 ```
 
+---
+
 ## 🚀 Quick Start
 
-### 1. Clone & Setup
+### Prerequisites
+
+| Component | Requirement |
+|-----------|-------------|
+| **Python** | 3.10+ |
+| **Camera** | USB webcam with 1080p support |
+| **OS** | Raspberry Pi OS Bookworm / macOS / Ubuntu |
+
+### 1. Clone & Install
+
 ```bash
-git clone https://github.com/YOUR_USER/smart-checkout.git
+git clone https://github.com/MaxiTVBG/smart-checkout.git
 cd smart-checkout
 python3 -m venv .venv
 source .venv/bin/activate
@@ -50,110 +120,186 @@ pip install -r requirements.txt
 brew install zbar libdmtx
 ```
 
-**Raspberry Pi (Debian/Ubuntu):**
+**Raspberry Pi / Debian:**
 ```bash
-sudo apt install libzbar0 libdmtx0b
+sudo apt-get install -y libzbar0 libdmtx0b libatlas-base-dev
 ```
 
 ### 3. Configure
+
 ```bash
 cp config.example.yaml config.yaml
-# Edit config.yaml — set tokens, camera index, model path, etc.
 ```
 
-Set a signing secret:
+Edit `config.yaml` — set your camera index, tokens, and signing secret:
+
 ```bash
-export SMART_CHECKOUT_CODE_SECRET='replace-with-at-least-32-random-characters'
+# Required: DataMatrix signing secret (min 32 characters)
+export SMART_CHECKOUT_CODE_SECRET='your-very-long-random-secret-key-here-min-32-chars'
 ```
 
-### 4. Run
+### 4. Generate DataMatrix Codes
 
-**Camera tracker:**
+Before tracking items, register signed codes for them:
+
+```bash
+python scripts/generate_datamatrix.py --class raspberry_pi_5 --count 5
+```
+
+This creates signed DataMatrix PNGs in `datamatrix_codes/` and registers them in the database.
+
+### 5. Run
+
+**Camera tracker (main system):**
 ```bash
 python main.py
 ```
 
-**Web admin only:**
+**Web admin panel (separate terminal):**
 ```bash
 python scripts/web_admin.py
+# → http://localhost:8000
 ```
+
+Press `q` in the camera window to quit.
+
+---
 
 ## 🌐 Web Admin Panel
 
-The web admin provides a complete dashboard for inventory management.
+Full-featured management dashboard accessible from any device on the network.
 
-### Features
-- **Dashboard**: Real-time metrics, anomaly detection
-- **Inventory**: Browse items with manual Add/Remove buttons
-- **Movements**: Filter and export movement logs
-- **Codes**: View and Activate/Deactivate registered codes
-- **Trace**: Full item lifecycle investigation
-- **SQL**: Direct SELECT queries (admin only)
-- **User Management**: Add/remove users, change roles from the UI
+### Pages
+
+| Page | Description | Permission |
+|------|-------------|------------|
+| **Dashboard** | Real-time metrics, 7-day chart, anomaly detection | `view_dashboard` |
+| **Inventory** | Browse items, manual Add/Remove | `view_inventory` |
+| **Movements** | Filter & export movement logs (CSV) | `view_logs` |
+| **Codes** | View/activate/deactivate DataMatrix codes | `manage_codes` |
+| **Trace** | Full lifecycle investigation for any item | `view_trace` |
+| **Tables** | Raw database table browser | `view_tables` |
+| **SQL** | Direct SELECT queries | `run_sql` |
+| **Users** | Add/remove users, change roles | `manage_users` |
 
 ### Authentication
 
-**From localhost (host machine):** Enter an access token defined in `config.yaml`.
+| Method | When |
+|--------|------|
+| **Access Token** | From localhost — enter token from `config.yaml` |
+| **Google OAuth** | From remote devices — requires [Google Cloud Console](https://console.cloud.google.com) setup |
 
-**From remote devices (phones, tablets):** Google OAuth sign-in. Requires a one-time setup in [Google Cloud Console](https://console.cloud.google.com):
-1. Create OAuth credentials (Web Application type)
-2. Add redirect URI: `http://<your-ip>.nip.io:<port>/auth/google/callback`
-3. Add `client_id`, `client_secret`, and authorized emails to `config.yaml`
-
-### Roles & Permissions
+### Roles
 
 | Role | Access |
-|---|---|
-| `admin` | Everything (including SQL and user management) |
+|------|--------|
+| `admin` | Full access including SQL console and user management |
 | `manager` | Inventory actions, codes, exports (no SQL, no user mgmt) |
 | `viewer` | Read-only access to all views |
 
-Custom roles can be defined in `config.yaml` with specific permissions.
+Custom roles with granular permissions can be defined in `config.yaml`.
+
+---
 
 ## 🍓 Raspberry Pi 5 Deployment
 
-### Setup
-```bash
-# On the Pi
-git clone https://github.com/YOUR_USER/smart-checkout.git /home/pi/smart-checkout
-cd /home/pi/smart-checkout
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-sudo apt install libzbar0 libdmtx0b
+### One-Click Setup
 
-cp config.example.yaml config.yaml
-# Edit config.yaml with your settings
+```bash
+chmod +x setup.sh
+./setup.sh
+sudo reboot  # Required for GPU memory allocation
 ```
 
-### Auto-start with systemd
-```bash
-# Web admin (starts automatically on boot)
-sudo cp deployment/smart-checkout-admin.service /etc/systemd/system/
-sudo systemctl enable smart-checkout-admin
-sudo systemctl start smart-checkout-admin
+The setup script handles: system dependencies, camera permissions, USB power optimization, GPU memory (256MB for 1080p), and Python virtual environment.
 
-# Camera tracker (optional, if running headless)
-sudo cp deployment/smart-checkout.service /etc/systemd/system/
-sudo systemctl enable smart-checkout
-sudo systemctl start smart-checkout
+### Auto-Start on Boot
+
+```bash
+# Install the systemd service
+sudo cp checkout.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable checkout.service
+sudo systemctl start checkout.service
+
+# View logs
+journalctl -u checkout.service -f
 ```
 
-### Check status
+> **Note:** Edit `checkout.service` if your username is not `pi` — change `User=` and `WorkingDirectory=`.
+
+### Hardware Requirements
+
+| Component | Requirement | Why |
+|-----------|-------------|-----|
+| **Power Supply** | 5V / 5A (official RPi 5 PSU) | Camera + YOLO = high power draw |
+| **Cooling** | Active fan **mandatory** | 1080p YOLO inference → 80°C+ without cooling |
+| **Camera** | USB webcam, 1080p capable | Verify: `v4l2-ctl --list-formats-ext -d /dev/video0` |
+| **Storage** | 16GB+ SD card (A2 class recommended) | WAL mode is optimized but fast storage helps |
+
+### Health Checks
+
 ```bash
-sudo systemctl status smart-checkout-admin
-sudo journalctl -u smart-checkout-admin -f
+# Camera resolution
+v4l2-ctl --get-fmt-video -d /dev/video0
+
+# CPU temperature (should be <75°C)
+vcgencmd measure_temp
+
+# CPU frequency (2400000 = not throttled)
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
 ```
+
+---
 
 ## 🔎 CLI Database Tools
+
 ```bash
+# Overview
 python scripts/db_tools.py summary
-python scripts/db_tools.py logs --sort timestamp --limit 50
+
+# Browse items
 python scripts/db_tools.py items --in-stock yes
-python scripts/db_tools.py trace led_box_BC418EA5
+
+# Movement logs
+python scripts/db_tools.py logs --sort timestamp --limit 50
+
+# Trace specific item
+python scripts/db_tools.py trace raspberry_pi_5_20F9FD53
+
+# Find anomalies
 python scripts/db_tools.py anomalies
-python scripts/db_tools.py backup
+
+# Backup database
+python scripts/backup_db.py
 ```
 
+---
+
+## 🔒 Security Model
+
+- **DataMatrix codes** are HMAC-SHA256 signed — cannot be forged without the secret key
+- **Anti-spoofing** cross-validates YOLO detection class against the signed code's class
+- **Web admin** uses session-based auth with CSRF protection and rate limiting
+- **Google OAuth** with email allowlist for remote access
+- **SQL console** is read-only (`SELECT` only) and restricted to `admin` role
+- **Secrets** are loaded from environment variables, never committed to git
+
+---
+
+## 🧠 How It Works
+
+1. **Camera** captures 1080p frames in a background thread
+2. **YOLO** runs inference asynchronously (frame skipping when busy)
+3. **ByteTrack** assigns persistent IDs to detected objects
+4. When an object is **stationary for 6 frames**, the scanner activates
+5. **DataMatrix decoder** reads the code from the object's ROI (with adaptive thresholding)
+6. **HMAC verification** ensures the code is authentic and registered
+7. **Zone detection** (left = IN, right = OUT) determines if item is being added or removed
+8. **SQLite** logs the action and updates inventory state
+
+---
+
 ## 📄 License
-Private project.
+
+Private project — all rights reserved.

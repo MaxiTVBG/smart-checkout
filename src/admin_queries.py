@@ -105,63 +105,135 @@ def log_admin_action(conn: sqlite3.Connection, action_type: str, entity_id: str,
     )
 
 
-def manual_add_item(conn: sqlite3.Connection, uid: str, item_class: str, user: dict[str, str]) -> str:
-    """Manually mark an item as ADDED (in stock). Returns status message."""
+def _canonical_inventory_uid(item_class: str, public_uid: str) -> str:
+    return f"{item_class}_{public_uid}"
+
+
+def resolve_inventory_uid(
+    conn: sqlite3.Connection,
+    uid: str,
+    item_class: str = "",
+    *,
+    require_active_code: bool = True,
+    allow_unregistered_without_class: bool = False,
+) -> dict[str, Any]:
+    """Resolve a manual UID, registered public UID, or registered payload to an inventory row UID."""
     uid = uid.strip()
     item_class = item_class.strip()
     if not uid:
         raise ValueError("UID is required.")
-    if not item_class:
-        raise ValueError("Item class is required.")
+
+    if table_exists(conn, "registered_codes"):
+        cols = column_names(conn, "registered_codes")
+        if {"public_uid", "item_class"}.issubset(cols):
+            conditions = ["public_uid = ?", "item_class || '_' || public_uid = ?"]
+            params: list[Any] = [uid, uid]
+            if "payload" in cols:
+                conditions.append("payload = ?")
+                params.append(uid)
+
+            select_cols = ["public_uid", "item_class"]
+            if "active" in cols:
+                select_cols.append("active")
+            if "payload" in cols:
+                select_cols.append("payload")
+
+            row = conn.execute(
+                f"""
+                SELECT {", ".join(select_cols)}
+                FROM registered_codes
+                WHERE {" OR ".join(conditions)}
+                ORDER BY item_class, public_uid
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            if row:
+                registered_class = str(row["item_class"])
+                public_uid = str(row["public_uid"])
+                if require_active_code and "active" in row.keys() and row["active"] != 1:
+                    raise ValueError(f"Code '{public_uid}' is disabled.")
+                if item_class and item_class != registered_class:
+                    raise ValueError(
+                        f"UID '{uid}' belongs to class '{registered_class}', not '{item_class}'."
+                    )
+                return {
+                    "uid": _canonical_inventory_uid(registered_class, public_uid),
+                    "item_class": registered_class,
+                    "public_uid": public_uid,
+                    "registered": True,
+                }
+
+    if not item_class and not allow_unregistered_without_class:
+        raise ValueError("Item class is required unless UID matches a registered code.")
+
+    return {
+        "uid": uid,
+        "item_class": item_class,
+        "public_uid": "",
+        "registered": False,
+    }
+
+
+def manual_add_item(conn: sqlite3.Connection, uid: str, item_class: str, user: dict[str, str]) -> str:
+    """Manually mark an item as ADDED (in stock). Returns status message."""
+    resolved = resolve_inventory_uid(conn, uid, item_class)
+    inventory_uid = resolved["uid"]
+    resolved_class = resolved["item_class"]
 
     # Check current status
-    row = conn.execute("SELECT in_stock FROM items WHERE uid = ?", (uid,)).fetchone()
+    row = conn.execute("SELECT in_stock FROM items WHERE uid = ?", (inventory_uid,)).fetchone()
     if row and row["in_stock"] == 1:
-        raise ValueError(f"Item '{uid}' is already in stock.")
+        raise ValueError(f"Item '{inventory_uid}' is already in stock.")
 
     # UPSERT item + log
     conn.execute(
         "INSERT INTO items (uid, item_class, in_stock) VALUES (?, ?, 1) "
         "ON CONFLICT(uid) DO UPDATE SET in_stock = 1",
-        (uid, item_class),
+        (inventory_uid, resolved_class),
     )
     conn.execute(
         "INSERT INTO logs (uid, action, timestamp) VALUES (?, 'ADDED', ?)",
-        (uid, _dt.datetime.now().isoformat()),
+        (inventory_uid, _dt.datetime.now().isoformat()),
     )
-    log_admin_action(conn, "MANUAL_ADD", uid, user, f"Class: {item_class}")
+    log_admin_action(conn, "MANUAL_ADD", inventory_uid, user, f"Class: {resolved_class}")
     conn.commit()
     
     # Trigger Webhook if needed
-    trigger_webhook("item_added", {"uid": uid, "class": item_class, "user": user.get("identifier")})
+    trigger_webhook("item_added", {"uid": inventory_uid, "class": resolved_class, "user": user.get("identifier")})
     
-    return f"Item '{uid}' added to inventory."
+    return f"Item '{inventory_uid}' added to inventory."
 
 
 def manual_remove_item(conn: sqlite3.Connection, uid: str, user: dict[str, str]) -> str:
     """Manually mark an item as REMOVED (out of stock). Returns status message."""
-    uid = uid.strip()
-    if not uid:
-        raise ValueError("UID is required.")
+    resolved = resolve_inventory_uid(
+        conn,
+        uid,
+        "",
+        require_active_code=False,
+        allow_unregistered_without_class=True,
+    )
+    inventory_uid = resolved["uid"]
 
-    row = conn.execute("SELECT in_stock, item_class FROM items WHERE uid = ?", (uid,)).fetchone()
+    row = conn.execute("SELECT in_stock, item_class FROM items WHERE uid = ?", (inventory_uid,)).fetchone()
     if not row:
-        raise ValueError(f"Item '{uid}' not found.")
+        raise ValueError(f"Item '{inventory_uid}' not found.")
     if row["in_stock"] == 0:
-        raise ValueError(f"Item '{uid}' is already out of stock.")
+        raise ValueError(f"Item '{inventory_uid}' is already out of stock.")
 
-    conn.execute("UPDATE items SET in_stock = 0 WHERE uid = ?", (uid,))
+    conn.execute("UPDATE items SET in_stock = 0 WHERE uid = ?", (inventory_uid,))
     conn.execute(
         "INSERT INTO logs (uid, action, timestamp) VALUES (?, 'REMOVED', ?)",
-        (uid, _dt.datetime.now().isoformat()),
+        (inventory_uid, _dt.datetime.now().isoformat()),
     )
-    log_admin_action(conn, "MANUAL_REMOVE", uid, user, f"Class: {row['item_class']}")
+    log_admin_action(conn, "MANUAL_REMOVE", inventory_uid, user, f"Class: {row['item_class']}")
     conn.commit()
     
     # Trigger Webhook
-    trigger_webhook("item_removed", {"uid": uid, "class": row["item_class"], "user": user.get("identifier")})
+    trigger_webhook("item_removed", {"uid": inventory_uid, "class": row["item_class"], "user": user.get("identifier")})
     
-    return f"Item '{uid}' removed from inventory."
+    return f"Item '{inventory_uid}' removed from inventory."
 
 
 def toggle_code_active(conn: sqlite3.Connection, public_uid: str, user: dict[str, str]) -> str:
@@ -191,10 +263,133 @@ def get_registered_codes_list(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     cols = column_names(conn, "registered_codes")
     if not {"public_uid", "item_class"}.issubset(cols):
         return []
+    active_filter = "WHERE active = 1" if "active" in cols else ""
     rows = conn.execute(
-        "SELECT public_uid, item_class FROM registered_codes WHERE active = 1 ORDER BY item_class, public_uid"
+        f"""
+        SELECT
+            public_uid,
+            item_class,
+            item_class || '_' || public_uid AS inventory_uid
+        FROM registered_codes
+        {active_filter}
+        ORDER BY item_class, public_uid
+        """
     ).fetchall()
     return rows_to_dicts(rows)
+
+
+def repair_public_uid_inventory_duplicates(conn: sqlite3.Connection) -> dict[str, int]:
+    """Merge item rows accidentally created with public UID keys into canonical inventory UIDs."""
+    stats = {
+        "duplicate_rows": 0,
+        "created_canonical_rows": 0,
+        "log_updates": 0,
+        "audit_updates": 0,
+        "deleted_public_uid_rows": 0,
+        "recalculated_items": 0,
+    }
+    if not (
+        table_exists(conn, "items")
+        and table_exists(conn, "registered_codes")
+        and {"uid", "item_class", "in_stock"}.issubset(column_names(conn, "items"))
+        and {"public_uid", "item_class"}.issubset(column_names(conn, "registered_codes"))
+    ):
+        return stats
+
+    duplicates = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT
+                i.uid AS public_uid,
+                i.item_class AS item_row_class,
+                i.in_stock AS public_in_stock,
+                rc.item_class AS registered_class,
+                rc.item_class || '_' || rc.public_uid AS canonical_uid
+            FROM items i
+            JOIN registered_codes rc ON rc.public_uid = i.uid
+            ORDER BY rc.item_class, rc.public_uid
+            """
+        ).fetchall()
+    )
+    if not duplicates:
+        return stats
+
+    log_cols = column_names(conn, "logs") if table_exists(conn, "logs") else []
+    audit_cols = column_names(conn, "admin_audit_logs") if table_exists(conn, "admin_audit_logs") else []
+
+    with conn:
+        for row in duplicates:
+            public_uid = str(row["public_uid"])
+            canonical_uid = str(row["canonical_uid"])
+            registered_class = str(row["registered_class"])
+            stats["duplicate_rows"] += 1
+
+            canonical = conn.execute(
+                "SELECT uid FROM items WHERE uid = ?",
+                (canonical_uid,),
+            ).fetchone()
+            if not canonical:
+                conn.execute(
+                    "INSERT INTO items (uid, item_class, in_stock) VALUES (?, ?, ?)",
+                    (canonical_uid, registered_class, row["public_in_stock"]),
+                )
+                stats["created_canonical_rows"] += 1
+
+            if {"uid"}.issubset(log_cols):
+                cur = conn.execute(
+                    "UPDATE logs SET uid = ? WHERE uid = ?",
+                    (canonical_uid, public_uid),
+                )
+                stats["log_updates"] += cur.rowcount if cur.rowcount > 0 else 0
+
+            if {"entity_id", "action_type"}.issubset(audit_cols):
+                cur = conn.execute(
+                    """
+                    UPDATE admin_audit_logs
+                    SET entity_id = ?
+                    WHERE entity_id = ?
+                      AND action_type IN ('MANUAL_ADD', 'MANUAL_REMOVE')
+                    """,
+                    (canonical_uid, public_uid),
+                )
+                stats["audit_updates"] += cur.rowcount if cur.rowcount > 0 else 0
+
+            if {"uid", "action"}.issubset(log_cols):
+                order_sql = "id DESC" if "id" in log_cols else "timestamp DESC"
+                latest = conn.execute(
+                    f"""
+                    SELECT action
+                    FROM logs
+                    WHERE uid = ?
+                    ORDER BY {order_sql}
+                    LIMIT 1
+                    """,
+                    (canonical_uid,),
+                ).fetchone()
+                if latest and latest["action"] in {"ADDED", "REMOVED"}:
+                    in_stock = 1 if latest["action"] == "ADDED" else 0
+                    conn.execute(
+                        "UPDATE items SET item_class = ?, in_stock = ? WHERE uid = ?",
+                        (registered_class, in_stock, canonical_uid),
+                    )
+                    stats["recalculated_items"] += 1
+                else:
+                    conn.execute(
+                        "UPDATE items SET item_class = ? WHERE uid = ?",
+                        (registered_class, canonical_uid),
+                    )
+
+            cur = conn.execute("DELETE FROM items WHERE uid = ?", (public_uid,))
+            stats["deleted_public_uid_rows"] += cur.rowcount if cur.rowcount > 0 else 0
+
+    return stats
+
+
+def _filter_value(filters: dict[str, Any], key: str, legacy_key: str | None = None) -> str:
+    value = filters.get(key)
+    if value in (None, "") and legacy_key:
+        value = filters.get(legacy_key)
+    return str(value or "").strip()
 
 
 def quote_identifier(name: str) -> str:
@@ -413,32 +608,32 @@ def get_logs(conn: sqlite3.Connection, filters: dict[str, Any] | None = None) ->
     where = ["1 = 1"]
     params: list[Any] = []
 
-    uid = str(filters.get("uid") or "").strip()
+    uid = _filter_value(filters, "uid")
     if uid and "uid" in log_cols:
         where.append("l.uid LIKE ?")
         params.append(f"%{uid}%")
 
-    action = str(filters.get("action") or "").strip().upper()
+    action = _filter_value(filters, "action").upper()
     if action and "action" in log_cols:
         where.append("l.action = ?")
         params.append(action)
 
-    item_class = str(filters.get("item_class") or "").strip()
+    item_class = _filter_value(filters, "item_class", "class")
     if item_class:
         where.append(f"{class_expr} = ?")
         params.append(item_class)
 
-    date_from = str(filters.get("date_from") or filters.get("from") or "").strip()
+    date_from = _filter_value(filters, "date_from", "from")
     if date_from and "timestamp" in log_cols:
         where.append("substr(l.timestamp, 1, 10) >= ?")
         params.append(date_from)
 
-    date_to = str(filters.get("date_to") or filters.get("to") or "").strip()
+    date_to = _filter_value(filters, "date_to", "to")
     if date_to and "timestamp" in log_cols:
         where.append("substr(l.timestamp, 1, 10) <= ?")
         params.append(date_to)
 
-    search = str(filters.get("search") or "").strip()
+    search = _filter_value(filters, "search")
     if search:
         search_parts = []
         if "uid" in log_cols:
@@ -451,7 +646,7 @@ def get_logs(conn: sqlite3.Connection, filters: dict[str, Any] | None = None) ->
         params.append(f"%{search}%")
         where.append("(" + " OR ".join(search_parts) + ")")
 
-    sort = str(filters.get("sort") or "timestamp").strip()
+    sort = _filter_value(filters, "sort") or "timestamp"
     order = "ASC" if str(filters.get("order") or "").lower() == "asc" else "DESC"
     sort_map = {
         "id": "l.id" if "id" in log_cols else "timestamp",
@@ -507,18 +702,18 @@ def get_inventory_items(conn: sqlite3.Connection, filters: dict[str, Any] | None
 
     where = ["1 = 1"]
     params: list[Any] = []
-    item_class = str(filters.get("item_class") or "").strip()
+    item_class = _filter_value(filters, "item_class", "class")
     if item_class and "item_class" in item_cols:
         where.append("i.item_class = ?")
         params.append(item_class)
 
-    in_stock = str(filters.get("in_stock") or "").strip().lower()
+    in_stock = _filter_value(filters, "in_stock").lower()
     if in_stock in {"1", "true", "yes", "in"} and "in_stock" in item_cols:
         where.append("i.in_stock = 1")
     elif in_stock in {"0", "false", "no", "out"} and "in_stock" in item_cols:
         where.append("i.in_stock = 0")
 
-    search = str(filters.get("search") or "").strip()
+    search = _filter_value(filters, "search")
     if search:
         parts = []
         for col in ("uid", "item_class"):
@@ -528,7 +723,7 @@ def get_inventory_items(conn: sqlite3.Connection, filters: dict[str, Any] | None
         if parts:
             where.append("(" + " OR ".join(parts) + ")")
 
-    sort = str(filters.get("sort") or "uid").strip()
+    sort = _filter_value(filters, "sort") or "uid"
     order = "ASC" if str(filters.get("order") or "").lower() == "asc" else "DESC"
     sort_map = {col: f"i.{quote_identifier(col)}" for col in item_cols}
     sort_map.update({"last_seen": "last_seen", "movement_count": "movement_count"})
@@ -569,18 +764,18 @@ def get_registered_codes(conn: sqlite3.Connection, filters: dict[str, Any] | Non
     where = ["1 = 1"]
     params: list[Any] = []
 
-    item_class = str(filters.get("item_class") or "").strip()
+    item_class = _filter_value(filters, "item_class", "class")
     if item_class and "item_class" in cols:
         where.append("c.item_class = ?")
         params.append(item_class)
 
-    active = str(filters.get("active") or "").strip().lower()
+    active = _filter_value(filters, "active").lower()
     if active in {"1", "true", "yes", "active"} and "active" in cols:
         where.append("c.active = 1")
     elif active in {"0", "false", "no", "inactive"} and "active" in cols:
         where.append("c.active = 0")
 
-    search = str(filters.get("search") or "").strip()
+    search = _filter_value(filters, "search")
     if search:
         parts = []
         for col in ("public_uid", "item_class", "payload"):
@@ -590,7 +785,7 @@ def get_registered_codes(conn: sqlite3.Connection, filters: dict[str, Any] | Non
         if parts:
             where.append("(" + " OR ".join(parts) + ")")
 
-    sort = str(filters.get("sort") or "created_at").strip()
+    sort = _filter_value(filters, "sort") or "created_at"
     order = "ASC" if str(filters.get("order") or "").lower() == "asc" else "DESC"
     sort_map = {col: f"c.{quote_identifier(col)}" for col in cols}
     sort_sql = sort_map.get(sort, sort_map.get("created_at", sort_map[cols[0]]))

@@ -1,54 +1,80 @@
 import cv2
 import threading
+import time
 
 class CameraStream:
     """
-    Чете кадри от камерата в отделна фонова нишка (Thread).
+    1080p Camera Stream за Raspberry Pi 5.
     
-    Хардуерна Оптимизация:
-    Ако главната програма чете кадрите линейно (synchronous), 
-    тежките задачи като YOLO и DataMatrix декодирането забавят цикъла. 
-    По време на забавянето хардуерният буфер на USB камерата се пълни със стари кадри, 
-    което води до ОГРОМЕН ЛАГ на екрана.
+    Заснема и предоставя кадри изцяло в 1080p резолюция.
+    Фоновата нишка постоянно източва хардуерния буфер на камерата,
+    за да се избегне натрупване на стари кадри и лаг.
     
-    Тази нишка постоянно чете и изпразва хардуерния буфер, 
-    а главната програма винаги взема само НАЙ-ПРЕСНИЯ наличен кадър.
+    При прекъсване на камерата автоматично опитва reconnect.
     """
-    def __init__(self, src=0):
-        self.stream = cv2.VideoCapture(src)
-        if not self.stream.isOpened():
-            raise RuntimeError(f"Грешка при отваряне на камера {src}!")
-            
-        # Хардуерна оптимизация: Ограничаваме резолюцията до 640x480
-        # YOLO не се нуждае от повече пиксели, а големите кадри сриват кадрите в секунда (FPS)
-        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    HIRES = (1920, 1080)
+    RECONNECT_DELAY = 2.0  # Секунди между опитите за повторно свързване
 
-        # Четем първия кадър
-        (self.grabbed, frame) = self.stream.read()
-        if not self.grabbed or frame is None:
-            raise RuntimeError(f"ГРЕШКА: Камерата на индекс {src} не връща валидни кадри! Смени 'camera_index' в config.yaml!")
+    def __init__(self, src=0):
+        self._src = src
+        self.stream = self._open_stream(src)
+        
+        # Четем първия кадър за валидация
+        grabbed, frame = self.stream.read()
+        if not grabbed or frame is None:
+            raise RuntimeError(
+                f"ГРЕШКА: Камерата на индекс {src} не връща валидни кадри! "
+                "Смени 'camera_index' в config.yaml!"
+            )
             
-        self.frame = cv2.resize(frame, (1920, 1080))
+        self.frame = cv2.resize(frame, self.HIRES)
+        self.grabbed = True
         self.stopped = False
+        self._lock = threading.Lock()
+
+    def _open_stream(self, src):
+        """Отваря камерата и настройва 1080p."""
+        stream = cv2.VideoCapture(src)
+        if not stream.isOpened():
+            raise RuntimeError(f"Грешка при отваряне на камера {src}!")
+        stream.set(cv2.CAP_PROP_FRAME_WIDTH, self.HIRES[0])
+        stream.set(cv2.CAP_PROP_FRAME_HEIGHT, self.HIRES[1])
+        stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        return stream
 
     def start(self):
-        # Стартираме нишката като Daemon (спира автоматично при затваряне на програмата)
-        threading.Thread(target=self.update, args=(), daemon=True).start()
+        threading.Thread(target=self._update, args=(), daemon=True).start()
         return self
 
-    def update(self):
+    def _update(self):
+        consecutive_failures = 0
         while not self.stopped:
-            # Непрекъснато "източваме" буфера на камерата във фонов режим
-            (grabbed, frame) = self.stream.read()
-            self.grabbed = grabbed
-            # Гарантираме 640x480 дори ако камерата игнорира CAP_PROP!
-            if grabbed and frame is not None:
-                self.frame = cv2.resize(frame, (1920, 1080))
+            grabbed, frame = self.stream.read()
+            if not grabbed or frame is None:
+                consecutive_failures += 1
+                if consecutive_failures > 30:
+                    # Камерата е паднала — опитваме reconnect
+                    print(f"[CAMERA] Камерата прекъсна. Reconnect след {self.RECONNECT_DELAY}s...")
+                    self.stream.release()
+                    time.sleep(self.RECONNECT_DELAY)
+                    try:
+                        self.stream = self._open_stream(self._src)
+                        consecutive_failures = 0
+                        print("[CAMERA] Камерата е свързана отново.")
+                    except RuntimeError:
+                        pass  # Ще опитаме пак на следващата итерация
+                continue
+            
+            consecutive_failures = 0
+            frame = cv2.resize(frame, self.HIRES)
+            with self._lock:
+                self.grabbed = True
+                self.frame = frame
 
     def read(self):
-        # Връщаме статуса и последния заснет кадър
-        return self.grabbed, self.frame
+        """Връща (success, frame)."""
+        with self._lock:
+            return self.grabbed, self.frame
 
     def stop(self):
         self.stopped = True

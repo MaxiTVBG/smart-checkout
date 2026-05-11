@@ -1,6 +1,44 @@
 {% extends "base.html" %}
 
 {% block title %}SQL Terminal - Smart Checkout{% endblock %}
+{% block page_name %}SQL Terminal{% endblock %}
+
+{% block extra_head %}
+<style>
+  .sql-editor-wrap {
+    position: relative;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.15);
+  }
+  .sql-editor-wrap textarea {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 0;
+    box-shadow: none;
+  }
+  .sql-editor-wrap textarea:focus { box-shadow: none; }
+  .sql-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: var(--surface-hover);
+    border-bottom: 1px solid var(--line);
+    margin: -16px -16px 16px -16px;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .terminal-dots { display: flex; gap: 6px; }
+  .terminal-dots span { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .td-r { background: #ff5f56; } .td-y { background: #ffbd2e; } .td-g { background: #27c93f; }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class="section-head">
@@ -8,22 +46,33 @@
   <span class="status neutral">SELECT Only</span>
 </div>
 
-<form class="sql-form" method="post" action="/sql">
+<form method="post" action="/sql" class="card" style="padding: 24px;">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-  <textarea name="sql" spellcheck="false" placeholder="Enter your SQL query here...">{{ sql }}</textarea>
-  <button type="submit" class="btn-primary" style="width:120px;">Run Query</button>
+  <div class="sql-editor-wrap">
+    <div class="sql-editor-header">
+      <div class="terminal-dots"><span class="td-r"></span><span class="td-y"></span><span class="td-g"></span></div>
+      <span style="color:var(--muted); font-size:12px;">Query Editor</span>
+    </div>
+    <textarea name="sql" spellcheck="false" placeholder="Enter your SQL query here...">{{ sql }}</textarea>
+  </div>
+  <button type="submit" class="btn-primary" style="margin-top:16px;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+    Run Query
+  </button>
 </form>
 
 <div style="margin-top:24px;">
   {% if error %}
-  <div class='metric error' style='margin-bottom:16px;'>{{ error }}</div>
+  <div class='error-shake'>{{ error }}</div>
   {% endif %}
   
   {% if result_html %}
     {% if truncated %}
-    <p class='muted' style='margin-bottom:10px;'>Result truncated to 300 rows.</p>
+    <p class='status warning' style='margin-bottom:16px;'>Result truncated to 300 rows.</p>
     {% endif %}
-    {{ result_html | safe }}
+    <div class="table-wrap">
+      {{ result_html | safe }}
+    </div>
   {% endif %}
 </div>
 {% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Dashboard - Smart Checkout{% endblock %}
+{% block page_name %}Dashboard{% endblock %}
 
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -8,49 +9,94 @@
 
 {% block content %}
 <section class="metrics">
-  <div class='metric'><span>In stock</span><strong>{{ summary.in_stock_items }}</strong></div>
-  <div class='metric'><span>Out</span><strong>{{ summary.out_stock_items }}</strong></div>
-  <div class='metric'><span>Logs today</span><strong>{{ summary.today_added + summary.today_removed }}</strong></div>
-  <div class='metric'><span>Registered</span><strong>{{ summary.registered_codes }}</strong></div>
+  <div class='metric'><span>In stock</span><strong class="count-up" data-val="{{ summary.in_stock_items }}">0</strong></div>
+  <div class='metric'><span>Out</span><strong class="count-up" data-val="{{ summary.out_stock_items }}">0</strong></div>
+  <div class='metric'><span>Logs today</span><strong class="count-up" data-val="{{ summary.today_added + summary.today_removed }}">0</strong></div>
+  <div class='metric'><span>Registered</span><strong class="count-up" data-val="{{ summary.registered_codes }}">0</strong></div>
 </section>
 
 <section class="grid two">
-  <div>
-    <div class="section-head"><h2>Stock by class</h2><a href="/items">Open</a></div>
+  <div class="card" style="padding: 24px;">
+    <div class="section-head" style="margin-bottom: 16px;"><h2>Stock by class</h2><a href="/items" class="btn">Open</a></div>
     {{ inventory_html | safe }}
   </div>
-  <div>
-    <div class="section-head"><h2>Active cash session</h2></div>
+  <div class="card" style="padding: 24px;">
+    <div class="section-head" style="margin-bottom: 16px;"><h2>Active cash session</h2></div>
     {{ session_html | safe }}
   </div>
 </section>
 
-<section>
-  <div class="section-head"><h2>Movements Today</h2></div>
-  <div class="card" style="padding: 20px;">
+<section class="card" style="padding: 24px;">
+  <div class="section-head" style="margin-bottom: 16px;"><h2>Movements Today</h2></div>
+  <div>
     <canvas id="movementsChart" height="100"></canvas>
   </div>
 </section>
 
-<section>
-  <div class="section-head"><h2>Recent movements</h2><a href="/logs">Open all</a></div>
-  {{ recent_html | safe }}
+<section class="card" style="padding: 24px;">
+  <div class="section-head" style="margin-bottom: 16px;"><h2>Recent movements</h2><a href="/logs" class="btn">Open all</a></div>
+  <div class="table-wrap" style="box-shadow: none;">
+    {{ recent_html | safe }}
+  </div>
 </section>
 
-<section>
-  <div class="section-head"><h2>Checks</h2><a href="/sql">SQL</a></div>
+<section class="card" style="padding: 24px;">
+  <div class="section-head" style="margin-bottom: 16px;"><h2>Checks</h2><a href="/sql" class="btn">SQL</a></div>
   {{ anomaly_html | safe }}
 </section>
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {
+    // Count-up animation
+    const counters = document.querySelectorAll('.count-up');
+    counters.forEach(counter => {
+        const target = +counter.getAttribute('data-val');
+        if (target === 0) return;
+
+        const duration = 1500; // ms
+        const increment = target / (duration / 16); // 60fps
+        let current = 0;
+
+        const updateCounter = () => {
+            current += increment;
+            if (current < target) {
+                counter.innerText = Math.ceil(current);
+                requestAnimationFrame(updateCounter);
+            } else {
+                counter.innerText = target;
+            }
+        };
+        updateCounter();
+    });
+
+    // Read CSS variables for theme-aware Chart.js
+    const style = getComputedStyle(document.documentElement);
+    const mutedColor = style.getPropertyValue('--muted').trim();
+    const lineColor = style.getPropertyValue('--line').trim();
+    const surfaceColor = style.getPropertyValue('--surface-solid').trim();
+    const okColor = style.getPropertyValue('--ok').trim();
+    const dangerColor = style.getPropertyValue('--danger').trim();
+
+    Chart.defaults.color = mutedColor;
+    Chart.defaults.borderColor = lineColor;
+    Chart.defaults.font.family = '"Inter", sans-serif';
+
     const ctx = document.getElementById('movementsChart').getContext('2d');
-    
-    // We will inject the chart data from FastAPI context
+
+    // Inject the chart data from FastAPI context
     const labels = {{ chart_labels | tojson | default('[]') }};
     const addedData = {{ chart_added | tojson | default('[]') }};
     const removedData = {{ chart_removed | tojson | default('[]') }};
-    
+
+    // Create gradient
+    const addedGradient = ctx.createLinearGradient(0, 0, 0, 400);
+    addedGradient.addColorStop(0, okColor.replace(')', ', 0.5)').replace('rgb', 'rgba'));
+    addedGradient.addColorStop(1, 'transparent');
+
+    const removedGradient = ctx.createLinearGradient(0, 0, 0, 400);
+    removedGradient.addColorStop(0, dangerColor.replace(')', ', 0.5)').replace('rgb', 'rgba'));
+    removedGradient.addColorStop(1, 'transparent');
+
     new Chart(ctx, {
         type: 'line',
         data: {
@@ -59,29 +105,56 @@ document.addEventListener("DOMContentLoaded", function() {
                 {
                     label: 'Items Added',
                     data: addedData,
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                    tension: 0.3,
-                    fill: true
+                    borderColor: okColor,
+                    backgroundColor: addedGradient,
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: surfaceColor,
+                    pointBorderColor: okColor,
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 },
                 {
                     label: 'Items Removed',
                     data: removedData,
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    tension: 0.3,
-                    fill: true
+                    borderColor: dangerColor,
+                    backgroundColor: removedGradient,
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointBackgroundColor: surfaceColor,
+                    pointBorderColor: dangerColor,
+                    pointBorderWidth: 2,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
                 }
             ]
         },
         options: {
             responsive: true,
             plugins: {
-                legend: { position: 'top' }
+                legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+                tooltip: {
+                    backgroundColor: surfaceColor,
+                    titleColor: style.getPropertyValue('--text').trim(),
+                    bodyColor: style.getPropertyValue('--text').trim(),
+                    borderColor: lineColor,
+                    borderWidth: 1,
+                    padding: 12,
+                    displayColors: true,
+                    boxPadding: 4
+                }
             },
             scales: {
-                y: { beginAtZero: true, ticks: { stepSize: 1 } }
-            }
+                y: { beginAtZero: true, ticks: { stepSize: 1, padding: 10 } },
+                x: { grid: { display: false }, ticks: { padding: 10 } }
+            },
+            interaction: {
+                intersect: false,
+                mode: 'index',
+            },
         }
     });
 });

@@ -1,19 +1,30 @@
 import cv2
+import numpy as np
 
 def draw_hud(frame, inventory_state, recent_logs):
     """Рисува модерен прозрачен HUD върху кадъра, без да закрива работното поле."""
     h, w = frame.shape[:2]
-    overlay = frame.copy()
     
-    # 1. Лента с наличности (Долу)
-    cv2.rectangle(overlay, (0, h - 40), (w, h), (0, 0, 0), -1)
+    # Оптимизация: Вместо frame.copy() за целия 1080p кадър,
+    # рисуваме правоъгълниците директно с полупрозрачност чрез sub-ROI overlay.
+    # Това спестява ~4MB копиране на всеки кадър.
     
-    # 2. Балони за логове (Горе вляво и Горе вдясно)
-    cv2.rectangle(overlay, (10, 10), (w // 2 - 20, 100), (0, 0, 0), -1)
-    cv2.rectangle(overlay, (w // 2 + 20, 10), (w - 10, 100), (0, 0, 0), -1)
+    # 1. Лента с наличности (Долу) — sub-ROI overlay
+    bar_roi = frame[h - 40:h, 0:w]
+    bar_overlay = bar_roi.copy()
+    cv2.rectangle(bar_overlay, (0, 0), (w, 40), (0, 0, 0), -1)
+    cv2.addWeighted(bar_overlay, 0.6, bar_roi, 0.4, 0, bar_roi)
     
-    # Прилагаме прозрачността (Alpha blending)
-    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+    # 2. Балони за логове (Горе вляво и Горе вдясно) — sub-ROI overlay
+    left_roi = frame[10:100, 10:w // 2 - 20]
+    left_overlay = left_roi.copy()
+    cv2.rectangle(left_overlay, (0, 0), (left_roi.shape[1], left_roi.shape[0]), (0, 0, 0), -1)
+    cv2.addWeighted(left_overlay, 0.6, left_roi, 0.4, 0, left_roi)
+    
+    right_roi = frame[10:100, w // 2 + 20:w - 10]
+    right_overlay = right_roi.copy()
+    cv2.rectangle(right_overlay, (0, 0), (right_roi.shape[1], right_roi.shape[0]), (0, 0, 0), -1)
+    cv2.addWeighted(right_overlay, 0.6, right_roi, 0.4, 0, right_roi)
     
     # --- ИЗРИСУВАНЕ НА ТЕКСТОВЕТЕ ---
     

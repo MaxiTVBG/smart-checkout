@@ -35,16 +35,19 @@ def table_html(
     table_name: str = "",
     can_manage_users: bool = False,
     existing_users: Dict[str, Dict[str, str]] | None = None,
+    code_toggle: bool = False,
 ) -> str:
     columns = columns or columns_from_rows(rows)
     if not columns:
-        return "<p class='muted' style='padding:16px;'>No columns.</p>"
+        return '<div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg><p>No data available.</p></div>'
     if not rows:
-        return "<p class='muted' style='padding:16px;'>No rows.</p>"
+        return '<div class="empty-state"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg><p>No rows found.</p></div>'
     
     show_auth_actions = table_name == "auth_logs" and can_manage_users
     head = "".join(f"<th>{h(col)}</th>" for col in columns)
     if show_auth_actions:
+        head += "<th>Actions</th>"
+    if code_toggle:
         head += "<th>Actions</th>"
 
     body_rows = []
@@ -64,8 +67,8 @@ def table_html(
             if col == "severity" and value == "error":
                 cell = '<span class="status out">ERROR</span>'
             elif col == "severity" and value == "warning":
-                cell = '<span class="status neutral">WARN</span>'
-            cells.append(f"<td>{cell}</td>")
+                cell = '<span class="status warning">WARN</span>'
+            cells.append(f'<td data-label="{h(col)}">{cell}</td>')
         
         if show_auth_actions:
             method = row.get("method")
@@ -82,12 +85,21 @@ def table_html(
                     btn = f'''<button type="button" class="btn-action neutral" onclick="openUserModal('modify', '{h(method)}', '{h(identifier)}', '{h(current_role)}')">Modify</button>'''
                 else:
                     btn = f'''<button type="button" class="btn-action add" onclick="openUserModal('add', '{h(method)}', '{h(identifier)}', '')">Add</button>'''
-            cells.append(f"<td>{btn}</td>")
+            cells.append(f'<td data-label="Actions">{btn}</td>')
+
+        if code_toggle:
+            uid = row.get("public_uid", "")
+            is_active = row.get("active", 0) == 1
+            btn_class = "remove" if is_active else "add"
+            btn_label = "Deactivate" if is_active else "Activate"
+            btn = f'<button type="button" class="btn-action {btn_class}" onclick="toggleCode(\'{h(uid)}\')">{btn_label}</button>'
+            cells.append(f'<td data-label="Actions">{btn}</td>')
 
         body_rows.append("<tr>" + "".join(cells) + "</tr>")
-    return f"<div class='table-wrap'><table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
+    return f"<div class='table-wrap'><table class='responsive-data-table'><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table></div>"
 
 def item_filters_html(params: dict[str, str]) -> str:
+    selected_class = params.get("item_class") or params.get("class", "")
     return f"""
     <form class="filters" method="get" action="{_url('/items')}">
         <div style="display:grid; gap:6px;">
@@ -96,7 +108,7 @@ def item_filters_html(params: dict[str, str]) -> str:
         </div>
         <div style="display:grid; gap:6px;">
             <label>Class</label>
-            <input name="class" value="{h(params.get('class',''))}">
+            <input name="item_class" value="{h(selected_class)}">
         </div>
         <div style="display:grid; gap:6px;">
             <label>Status</label>
@@ -115,6 +127,7 @@ def item_filters_html(params: dict[str, str]) -> str:
     """
 
 def log_filters_html(params: dict[str, str]) -> str:
+    selected_class = params.get("item_class") or params.get("class", "")
     return f"""
     <form class="filters" method="get" action="{_url('/logs')}">
         <div style="display:grid; gap:6px;">
@@ -127,7 +140,7 @@ def log_filters_html(params: dict[str, str]) -> str:
         </div>
         <div style="display:grid; gap:6px;">
             <label>Class</label>
-            <input name="class" value="{h(params.get('class',''))}">
+            <input name="item_class" value="{h(selected_class)}">
         </div>
         <div style="display:grid; gap:6px;">
             <label>Action</label>
@@ -154,6 +167,7 @@ def log_filters_html(params: dict[str, str]) -> str:
     """
 
 def code_filters_html(params: dict[str, str]) -> str:
+    selected_class = params.get("item_class") or params.get("class", "")
     return f"""
     <form class="filters" method="get" action="{_url('/codes')}">
         <div style="display:grid; gap:6px;">
@@ -162,7 +176,7 @@ def code_filters_html(params: dict[str, str]) -> str:
         </div>
         <div style="display:grid; gap:6px;">
             <label>Class</label>
-            <input name="class" value="{h(params.get('class',''))}">
+            <input name="item_class" value="{h(selected_class)}">
         </div>
         <div style="display:grid; gap:6px;">
             <label>Active</label>

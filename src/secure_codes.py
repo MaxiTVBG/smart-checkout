@@ -36,14 +36,23 @@ class SecureCode:
 def load_code_secret(config):
     security_config = config.get("security", {}) if config else {}
     env_name = security_config.get("secret_env", DEFAULT_SECRET_ENV)
-    secret = os.environ.get(env_name) or security_config.get("secret_key")
+
+    # Ensure env_name is a string for os.environ.get
+    secret = None
+    if isinstance(env_name, str):
+        secret = os.environ.get(env_name)
+
+    secret = secret or security_config.get("secret_key")
 
     if not secret:
         raise SecureCodeError(
-            f"Missing Data Matrix signing secret. Set {env_name} or security.secret_key."
+            f"Missing Data Matrix signing secret. Set {env_name} environment variable or security.secret_key in config.yaml."
         )
 
+    # Ensure secret is a string (YAML might parse numeric secrets as int)
+    secret = str(secret)
     secret_bytes = secret.encode("utf-8")
+
     if len(secret_bytes) < MIN_SECRET_BYTES:
         raise SecureCodeError(
             f"Data Matrix signing secret must be at least {MIN_SECRET_BYTES} bytes."

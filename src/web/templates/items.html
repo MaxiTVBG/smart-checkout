@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Inventory - Smart Checkout{% endblock %}
+{% block page_name %}Inventory{% endblock %}
 
 {% block extra_head %}
 <script src="https://unpkg.com/html5-qrcode"></script>
@@ -14,29 +15,36 @@
 
 {% if can_add %}
 <details class="action-panel" id="addPanel">
-  <summary>+ Manual Add Item</summary>
+  <summary>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Manual Add Item
+  </summary>
   <div style="padding: 0 20px 20px;">
-    <div id="reader" style="width: 100%; max-width: 400px; margin-bottom: 16px; display: none;"></div>
-    <button type="button" class="btn-action neutral" id="scanBtn" style="margin-bottom: 16px;">📷 Scan QR/Barcode</button>
+    <div id="reader" style="width: 100%; max-width: 400px; margin-bottom: 16px; display: none; border-radius: 8px; overflow: hidden; border: 1px solid var(--line);"></div>
+    <button type="button" class="btn-action neutral" id="scanBtn" style="margin-bottom: 16px; padding: 8px 16px;">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+      Scan QR/Barcode
+    </button>
     
-    <form method="post" action="/action/add" class="action-form">
+    <form method="post" action="/action/add" class="action-form" id="addItemForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="input-group" style="flex:1;">
-        <label>Select registered code</label>
-        <select name="uid" id="add-uid-select" onchange="var o=this.options[this.selectedIndex]; document.getElementById('add-class').value=o.dataset.class||'';">
+      <input type="hidden" name="uid" id="add-uid-resolved" value="">
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <select id="add-uid-select" onchange="var o=this.options[this.selectedIndex]; document.getElementById('add-class').value=o.dataset.class||''; document.getElementById('add-uid-manual').value=''; document.getElementById('add-uid-resolved').value=this.value;" style="padding-top:14px;">
           <option value="">— or type/scan UID below —</option>
           {{ add_options | safe }}
         </select>
+        <label style="top:10px; font-size:11px; color:var(--accent);">Select registered code</label>
       </div>
-      <div class="input-group" style="flex:1;">
-        <label>Or enter UID manually</label>
-        <input name="uid" placeholder="UID" id="add-uid-manual">
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <input id="add-uid-manual" placeholder=" " oninput="document.getElementById('add-uid-select').value=''; document.getElementById('add-class').value=''; document.getElementById('add-uid-resolved').value=this.value;">
+        <label for="add-uid-manual">Or enter UID manually</label>
       </div>
-      <div class="input-group" style="flex:0.6;">
-        <label>Class (auto-filled)</label>
-        <input name="item_class" id="add-class" placeholder="Auto" readonly>
+      <div class="floating-group" style="flex:0.6; margin-bottom:0;">
+        <input name="item_class" id="add-class" placeholder=" " readonly>
+        <label for="add-class">Class (auto-filled)</label>
       </div>
-      <button type="submit" class="btn-action add" onclick="return confirm('Add this item to inventory?')">Add</button>
+      <button type="submit" class="btn-action add" style="padding:12px 24px;" onclick="var uid=document.getElementById('add-uid-resolved').value; if(!uid){alert('Please select or enter a UID.'); return false;} return confirm('Add this item to inventory?')">Add</button>
     </form>
   </div>
 </details>
@@ -54,18 +62,45 @@ document.getElementById('scanBtn').addEventListener('click', function() {
     html5QrcodeScanner.render(function(decodedText, decodedResult) {
         document.getElementById('add-uid-manual').value = decodedText;
         document.getElementById('add-uid-select').value = "";
+        document.getElementById('add-class').value = "";
+        document.getElementById('add-uid-resolved').value = decodedText;
         html5QrcodeScanner.clear();
         readerDiv.style.display = 'none';
-        
-        // Auto-submit or just fill? We will just fill so user can select class if needed.
-    }, function(error) {
-        // silently ignore scanning errors (happens when no barcode found in frame)
-    });
+    }, function(error) {});
 });
 </script>
 {% endif %}
 
+{% if can_remove %}
+<details class="action-panel" id="removePanel">
+  <summary>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    Manual Remove Item
+  </summary>
+  <div style="padding: 0 20px 20px;">
+    <form method="post" action="/action/remove" class="action-form" id="removeItemForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="uid" id="remove-uid-resolved" value="">
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <select id="remove-uid-select" onchange="document.getElementById('remove-uid-manual').value=''; document.getElementById('remove-uid-resolved').value=this.value;" style="padding-top:14px;">
+          <option value="">— or type/scan UID below —</option>
+          {{ remove_options | safe }}
+        </select>
+        <label style="top:10px; font-size:11px; color:var(--accent);">Select in-stock item</label>
+      </div>
+      <div class="floating-group" style="flex:1; margin-bottom:0;">
+        <input id="remove-uid-manual" placeholder=" " oninput="document.getElementById('remove-uid-select').value=''; document.getElementById('remove-uid-resolved').value=this.value;">
+        <label for="remove-uid-manual">Or enter UID manually</label>
+      </div>
+      <button type="submit" class="btn-action remove" style="padding:12px 24px;" onclick="var uid=document.getElementById('remove-uid-resolved').value; if(!uid){alert('Please select or enter a UID.'); return false;} return confirm('Remove this item from inventory?')">Remove</button>
+    </form>
+  </div>
+</details>
+{% endif %}
+
 {{ item_filters_html | safe }}
 
+<div class="table-wrap">
 {{ table_html | safe }}
+</div>
 {% endblock %}

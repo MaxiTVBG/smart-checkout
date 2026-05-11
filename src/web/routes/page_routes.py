@@ -1,5 +1,6 @@
 import csv
 import io
+import urllib.parse
 import datetime
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import HTMLResponse, Response
@@ -18,9 +19,10 @@ from ...admin_queries import (
     table_exists,
     table_names,
     get_table_rows,
-    table_columns
+    table_columns,
+    run_select
 )
-from ..auth import require_auth, _has_perm, generate_csrf_token, load_config
+from ..auth import require_auth, _has_perm, generate_csrf_token, validate_csrf, load_config
 from ..utils import (
     table_html, item_filters_html, log_filters_html, code_filters_html, table_filters_html, h
 )
@@ -115,17 +117,34 @@ async def items(request: Request, user: dict = Depends(require_auth)):
     with connect_readonly(db_path) as conn:
         result = get_inventory_items(conn, params)
         can_add = _has_perm(user["role"], "manual_add")
+        can_remove = _has_perm(user["role"], "manual_remove")
         
         add_options = ""
         if can_add:
             codes = get_registered_codes_list(conn)
-            add_options = "".join(f'<option value="{h(c["public_uid"])}" data-class="{h(c.get("item_class", ""))}">{h(c["public_uid"])} ({h(c.get("item_class", ""))})</option>' for c in codes)
+            add_options = "".join(
+                f'<option value="{h(c["inventory_uid"])}" data-class="{h(c.get("item_class", ""))}" data-public-uid="{h(c["public_uid"])}">'
+                f'{h(c["public_uid"])} ({h(c.get("item_class", ""))})</option>'
+                for c in codes
+            )
+        remove_options = ""
+        if can_remove:
+            removable_items = get_inventory_items(
+                conn,
+                {"in_stock": "yes", "sort": "uid", "order": "asc", "limit": 1000},
+            )["rows"]
+            remove_options = "".join(
+                f'<option value="{h(item["uid"])}">{h(item["uid"])} ({h(item.get("item_class", ""))})</option>'
+                for item in removable_items
+            )
 
     context = _get_common_context(request, user, "items")
     context.update({
         "total_rows": result["total"],
         "can_add": can_add,
+        "can_remove": can_remove,
         "add_options": add_options,
+        "remove_options": remove_options,
         "item_filters_html": item_filters_html(params),
         "table_html": table_html(result["rows"], result["columns"], trace_links=True),
     })
@@ -159,12 +178,19 @@ async def logs(request: Request, user: dict = Depends(require_auth)):
             headers={"Content-Disposition": "attachment; filename=\"movements.csv\""}
         )
 
+    can_export = _has_perm(user["role"], "export_data")
+
+    # Build export URL correctly
+    export_params = dict(request.query_params)
+    export_params["export"] = "1"
+    export_url = f"/logs?{urllib.parse.urlencode(export_params)}" if can_export else ""
+
     context = _get_common_context(request, user, "logs")
     context.update({
         "total_rows": result["total"],
         "filters_html": log_filters_html(params),
         "table_html": table_html(result["rows"], result["columns"], trace_links=True),
-        "export_url": f"{request.url}?export=1&" + str(request.query_params)
+        "export_url": export_url
     })
     return templates.TemplateResponse(request, "logs.html", context)
 
@@ -210,7 +236,7 @@ async def codes(request: Request, user: dict = Depends(require_auth)):
         "total_rows": result["total"],
         "can_edit": can_edit,
         "filters_html": code_filters_html(params),
-        "table_html": table_html(result["rows"], result["columns"]),
+        "table_html": table_html(result["rows"], result["columns"], code_toggle=can_edit),
     })
     return templates.TemplateResponse(request, "codes.html", context)
 
@@ -317,7 +343,7 @@ async def table_view(request: Request, user: dict = Depends(require_auth)):
             "table_name": table_name,
             "total_rows": result["total"],
             "filters_html": table_filters_html(table_name, params),
-            "table_html": table_html(result["rows"], result["columns"], trace_links=True, url=None, table_name=table_name, can_manage_users=_has_perm(user["role"], "manage_users"), existing_users=existing_users),
+            "table_html": table_html(result["rows"], result["columns"], trace_links=True, table_name=table_name, can_manage_users=_has_perm(user["role"], "manage_users"), existing_users=existing_users),
             "schema_html": table_html(schema, ["cid","name","type","notnull","dflt_value","pk"]),
             "modal_html": modal_html,
         })
@@ -369,29 +395,21 @@ async def sql_view(request: Request, user: dict = Depends(require_auth)):
     
     if request.method == "POST":
         form = await request.form()
+        validate_csrf(request, form.get("csrf_token", ""))
         sql = form.get("sql", "").strip()
         context["sql"] = sql
         
         if sql:
-            if not sql.lower().lstrip().startswith("select"):
-                context["error"] = "Only SELECT queries are allowed."
-            elif ";" in sql and not sql.strip().endswith(";"):
-                 context["error"] = "Multiple statements are not allowed."
-            else:
-                db_path = resolve_db_path()
-                try:
-                    with connect_readonly(db_path) as conn:
-                        rows = conn.execute(sql).fetchmany(301)
-                        if not rows:
-                            context["result_html"] = "<p class='muted'>Query executed successfully (0 rows).</p>"
-                        else:
-                            truncated = len(rows) > 300
-                            if truncated:
-                                rows = rows[:300]
-                            cols = list(rows[0].keys())
-                            context["result_html"] = table_html([dict(r) for r in rows], cols)
-                            context["truncated"] = truncated
-                except Exception as e:
-                    context["error"] = f"SQL Error: {e}"
+            db_path = resolve_db_path()
+            try:
+                with connect_readonly(db_path) as conn:
+                    result = run_select(conn, sql, max_rows=300)
+                    if not result["rows"]:
+                        context["result_html"] = "<p class='muted'>Query executed successfully (0 rows).</p>"
+                    else:
+                        context["result_html"] = table_html(result["rows"], result["columns"])
+                    context["truncated"] = result["truncated"]
+            except Exception as e:
+                context["error"] = f"SQL Error: {e}"
                     
     return templates.TemplateResponse(request, "sql.html", context)

@@ -1,36 +1,84 @@
 {% extends "base.html" %}
 
 {% block title %}Trace - Smart Checkout{% endblock %}
+{% block page_name %}Trace{% endblock %}
+
+{% block extra_head %}
+<style>
+/* Timeline connector */
+.timeline-table table { border: none; }
+.timeline-table tr { position: relative; background: transparent !important; }
+.timeline-table td, .timeline-table th { border: none; padding: 16px; }
+.timeline-table td:first-child {
+  position: relative;
+  padding-left: 32px;
+}
+.timeline-table td:first-child::before {
+  content: ''; position: absolute; left: 16px; top: 24px; bottom: -24px; width: 2px; background: var(--line);
+}
+.timeline-table tr:last-child td:first-child::before { display: none; }
+.timeline-table td:first-child::after {
+  content: ''; position: absolute; left: 12px; top: 18px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.search-wrap { position: relative; width: 100%; }
+.search-wrap svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none;}
+.search-wrap input { padding-left: 40px !important; }
+</style>
+{% endblock %}
 
 {% block content %}
 <div class='section-head'>
   <h1>Trace item</h1>
   {% if trace %}
-  <span class="status {{ trace.current_status }}">{{ trace.current_status | upper }}</span>
+  {% set status_class = 'in' if trace.current_status == 'in_stock' else ('out' if trace.current_status == 'out' else 'neutral') %}
+  <span class="status {{ status_class }}">{{ trace.current_status | replace('_', ' ') | upper }}</span>
   {% endif %}
 </div>
 
 <form class="filters" method="get" action="/trace">
-  <div style="flex-grow:1;">
-    <label>UID Trace Query</label>
+  <div class="search-wrap" style="flex-grow:1;">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
     <input name="uid" value="{{ uid }}" placeholder="Search by UID..." style="width:100%;">
   </div>
-  <button type="submit" class="btn-primary" style="width:auto;">Trace</button>
+  <button type="submit" class="btn-primary" style="width:auto; padding: 10px 24px;">Trace</button>
 </form>
 
 {% if trace %}
-<p class="muted" style="margin-bottom:20px;">Candidates found: {{ trace.candidate_uids | join(', ') if trace.candidate_uids else 'None' }}</p>
+<p class="muted" style="margin-bottom:24px;">Candidates found: {{ trace.candidate_uids | join(', ') if trace.candidate_uids else 'None' }}</p>
 
-<section><h2>Item</h2>{{ item_html | safe }}</section>
-<section><h2>Registered code</h2>{{ code_html | safe }}</section>
-<section><h2>Timeline</h2>{{ timeline_html | safe }}</section>
-<section>
-  <h2>Trace checks</h2>
+<div class="grid two">
+  <div class="card" style="padding: 24px;">
+    <h2>Item Details</h2>
+    <div class="table-wrap" style="margin-top:16px; box-shadow:none;">{{ item_html | safe }}</div>
+  </div>
+  <div class="card" style="padding: 24px;">
+    <h2>Registered Code</h2>
+    <div class="table-wrap" style="margin-top:16px; box-shadow:none;">{{ code_html | safe }}</div>
+  </div>
+</div>
+
+<section class="card" style="padding: 24px; margin-top:24px;">
+  <h2>Timeline</h2>
+  <div class="timeline-table" style="margin-top:20px;">
+    {{ timeline_html | safe }}
+  </div>
+</section>
+
+<section class="card" style="padding: 24px;">
+  <h2>Trace Checks</h2>
+  <div style="margin-top:16px;">
   {% if anomaly_html %}
+    <div class="table-wrap" style="box-shadow:none;">
     {{ anomaly_html | safe }}
+    </div>
   {% else %}
-    <p class='muted' style='padding:16px;'>No trace anomalies.</p>
+    <div class="empty-state">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--ok);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      <p>No trace anomalies detected.</p>
+    </div>
   {% endif %}
+  </div>
 </section>
 {% endif %}
 {% endblock %}
