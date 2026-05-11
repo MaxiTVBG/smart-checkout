@@ -1,39 +1,41 @@
 import cv2
 import threading
 import time
+import numpy as np
 
 class CameraStream:
     """
-    1080p Camera Stream за Raspberry Pi 5.
+    Dual-Resolution Camera Stream за Raspberry Pi 5.
     
-    Заснема и предоставя кадри изцяло в 1080p резолюция.
-    Фоновата нишка постоянно източва хардуерния буфер на камерата,
-    за да се избегне натрупване на стари кадри и лаг.
+    Заснема в 1080p, предоставя два изхода:
+    - hires (1920x1080): за DataMatrix сканиране
+    - lores (640x480):    за YOLO inference и UI рендериране
     
-    При прекъсване на камерата автоматично опитва reconnect.
+    Фоновата нишка предварително resize-ва, за да не товари main loop.
     """
     HIRES = (1920, 1080)
-    RECONNECT_DELAY = 2.0  # Секунди между опитите за повторно свързване
+    LORES = (640, 480)
+    RECONNECT_DELAY = 2.0
 
     def __init__(self, src=0):
         self._src = src
         self.stream = self._open_stream(src)
-        
-        # Четем първия кадър за валидация
+
         grabbed, frame = self.stream.read()
         if not grabbed or frame is None:
             raise RuntimeError(
                 f"ГРЕШКА: Камерата на индекс {src} не връща валидни кадри! "
                 "Смени 'camera_index' в config.yaml!"
             )
-            
-        self.frame = cv2.resize(frame, self.HIRES)
+
+        hires = cv2.resize(frame, self.HIRES)
+        self._hires = hires
+        self._lores = cv2.resize(hires, self.LORES, interpolation=cv2.INTER_AREA)
         self.grabbed = True
         self.stopped = False
         self._lock = threading.Lock()
 
     def _open_stream(self, src):
-        """Отваря камерата и настройва 1080p."""
         stream = cv2.VideoCapture(src)
         if not stream.isOpened():
             raise RuntimeError(f"Грешка при отваряне на камера {src}!")
@@ -43,7 +45,7 @@ class CameraStream:
         return stream
 
     def start(self):
-        threading.Thread(target=self._update, args=(), daemon=True).start()
+        threading.Thread(target=self._update, daemon=True).start()
         return self
 
     def _update(self):
@@ -53,8 +55,7 @@ class CameraStream:
             if not grabbed or frame is None:
                 consecutive_failures += 1
                 if consecutive_failures > 30:
-                    # Камерата е паднала — опитваме reconnect
-                    print(f"[CAMERA] Камерата прекъсна. Reconnect след {self.RECONNECT_DELAY}s...")
+                    print(f"[CAMERA] Reconnect след {self.RECONNECT_DELAY}s...")
                     self.stream.release()
                     time.sleep(self.RECONNECT_DELAY)
                     try:
@@ -62,19 +63,21 @@ class CameraStream:
                         consecutive_failures = 0
                         print("[CAMERA] Камерата е свързана отново.")
                     except RuntimeError:
-                        pass  # Ще опитаме пак на следващата итерация
+                        pass
                 continue
-            
+
             consecutive_failures = 0
-            frame = cv2.resize(frame, self.HIRES)
+            hires = cv2.resize(frame, self.HIRES)
+            lores = cv2.resize(hires, self.LORES, interpolation=cv2.INTER_AREA)
             with self._lock:
                 self.grabbed = True
-                self.frame = frame
+                self._hires = hires
+                self._lores = lores
 
     def read(self):
-        """Връща (success, frame)."""
+        """Връща (success, lores_frame, hires_frame)."""
         with self._lock:
-            return self.grabbed, self.frame
+            return self.grabbed, self._lores, self._hires
 
     def stop(self):
         self.stopped = True

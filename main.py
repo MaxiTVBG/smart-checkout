@@ -1,5 +1,4 @@
 import os
-# Заобикаляне на проблема с Wayland на Raspberry Pi Bookworm
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 import cv2
@@ -11,7 +10,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from ultralytics import YOLO
 
-# Импортиране на локални модули
 from src.database import InventoryDatabase
 from src.scanner import scan_code_in_roi
 from src.secure_codes import SecureCodeError, load_code_secret, validate_registered_code
@@ -33,30 +31,19 @@ def load_config(config_path='config.yaml'):
 
 
 def is_stationary(history, threshold=15):
-    """Проверява дали обектът е останал на място през последните 6 кадъра."""
     if len(history) < 6:
         return False
     recent = history[-6:]
     avg_x = sum(p[0] for p in recent) / 6
     avg_y = sum(p[1] for p in recent) / 6
-    for x, y in recent:
-        if math.hypot(x - avg_x, y - avg_y) > threshold:
-            return False
-    return True
+    return all(math.hypot(x - avg_x, y - avg_y) <= threshold for x, y in recent)
 
 
 # ---------------------------------------------------------------------------
-# Асинхронен YOLO Inference Pipeline
+# YOLO Pipeline (persistent worker thread)
 # ---------------------------------------------------------------------------
 
 class YOLOPipeline:
-    """
-    Изпълнява YOLO inference в единствена фонова нишка.
-    
-    Използва Event-базиран модел вместо да създава нова нишка на всеки кадър.
-    Главният цикъл подава кадри чрез submit(), а резултатите се четат с get_results().
-    Frame skipping: ако предишен inference все още работи, кадърът се пропуска.
-    """
     def __init__(self, model_path):
         self.model = YOLO(model_path)
         self._result = None
@@ -65,12 +52,10 @@ class YOLOPipeline:
         self._frame_lock = threading.Lock()
         self._new_frame = threading.Event()
         self._stopped = False
-        # Единствена нишка — без overhead от Thread() на всеки кадър
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
     def submit(self, frame):
-        """Подава нов кадър. Ако предишният не е обработен, той се презаписва (frame skip)."""
         with self._frame_lock:
             self._frame = frame
         self._new_frame.set()
@@ -79,14 +64,11 @@ class YOLOPipeline:
         while not self._stopped:
             self._new_frame.wait(timeout=1.0)
             self._new_frame.clear()
-            
             with self._frame_lock:
                 frame = self._frame
                 self._frame = None
-            
             if frame is None:
                 continue
-                
             try:
                 results = self.model.track(
                     frame, persist=True, tracker="bytetrack.yaml", verbose=False
@@ -97,7 +79,6 @@ class YOLOPipeline:
                 print(f"[YOLO ERROR] {e}")
 
     def get_results(self):
-        """Връща последния готов YOLO резултат (или None)."""
         with self._result_lock:
             return self._result
 
@@ -106,20 +87,15 @@ class YOLOPipeline:
 
 
 # ---------------------------------------------------------------------------
-# State Machine: LOCKED / ACTIVE
+# State Machine
 # ---------------------------------------------------------------------------
 
 class SystemState:
-    """
-    Контролира достъпа до касата.
-    LOCKED  – Камерата работи, YOLO засича обекти, но НЕ логва.
-    ACTIVE  – Пълна функционалност: сканиране + логване.
-    """
     LOCKED = "LOCKED"
     ACTIVE = "ACTIVE"
 
     def __init__(self):
-        self._state = self.ACTIVE  # По подразбиране ACTIVE
+        self._state = self.ACTIVE
         self._lock = threading.Lock()
 
     @property
@@ -136,40 +112,35 @@ class SystemState:
         with self._lock:
             if self._state != self.ACTIVE:
                 self._state = self.ACTIVE
-                print("[STATE] Система ОТКЛЮЧЕНА → ACTIVE")
+                print("[STATE] ОТКЛЮЧЕНА → ACTIVE")
 
     def lock(self):
         with self._lock:
             if self._state != self.LOCKED:
                 self._state = self.LOCKED
-                print("[STATE] Система ЗАКЛЮЧЕНА → LOCKED")
+                print("[STATE] ЗАКЛЮЧЕНА → LOCKED")
 
 
 # ---------------------------------------------------------------------------
-# Non-blocking Scanner
+# Async Scanner
 # ---------------------------------------------------------------------------
 
 class AsyncScanner:
-    """
-    Обвива scan_code_in_roi в ThreadPoolExecutor.
-    Подава КОПИЕ на кадъра, за да не го замърси HUD рендерирането.
-    """
     def __init__(self, max_workers=2):
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._pending = {}  # track_id -> Future
+        self._pending = {}
 
-    def submit_scan(self, track_id, frame, x1, y1, x2, y2):
-        """Подава заявка за сканиране. Не презаписва готов/чакащ резултат."""
+    def submit_scan(self, track_id, hires_frame, x1, y1, x2, y2):
+        """Подава scan заявка с 1080p координати и 1080p кадър."""
         if track_id in self._pending:
             return
-        # КРИТИЧНО: Подаваме КОПИЕ на кадъра, защото главният цикъл
-        # продължава да рисува HUD/рамки върху оригинала
-        frame_snapshot = frame.copy()
-        future = self._executor.submit(scan_code_in_roi, frame_snapshot, int(x1), int(y1), int(x2), int(y2))
+        snapshot = hires_frame.copy()
+        future = self._executor.submit(
+            scan_code_in_roi, snapshot, int(x1), int(y1), int(x2), int(y2)
+        )
         self._pending[track_id] = future
 
     def get_result(self, track_id):
-        """Връща (payload, code_type) ако сканирането е готово, иначе None."""
         if track_id not in self._pending:
             return None
         future = self._pending[track_id]
@@ -187,6 +158,25 @@ class AsyncScanner:
 
 
 # ---------------------------------------------------------------------------
+# Coordinate Mapping: lores → hires
+# ---------------------------------------------------------------------------
+
+# Предварително изчислени скейл фактори (избягваме деление на всеки кадър)
+SCALE_X = CameraStream.HIRES[0] / CameraStream.LORES[0]  # 1920/640 = 3.0
+SCALE_Y = CameraStream.HIRES[1] / CameraStream.LORES[1]  # 1080/480 = 2.25
+
+
+def lores_to_hires(x1, y1, x2, y2):
+    """Преобразува координати от 640x480 (YOLO) към 1920x1080 (Scanner)."""
+    return (
+        int(x1 * SCALE_X),
+        int(y1 * SCALE_Y),
+        int(x2 * SCALE_X),
+        int(y2 * SCALE_Y),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main Loop
 # ---------------------------------------------------------------------------
 
@@ -198,16 +188,16 @@ def main():
     except SecureCodeError as e:
         print(f"Грешка в защитата на Data Matrix кодовете: {e}")
         return
-    
+
     print("Инициализация на база данни (SQLite WAL)...")
     db_path = config['paths']['db_path']
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     inventory_db = InventoryDatabase(db_path)
-    
-    print("Зареждане на YOLO модел (Async Pipeline, 1080p)...")
+
+    print("Зареждане на YOLO модел...")
     yolo_pipe = YOLOPipeline(config['paths']['yolo_model'])
-    
-    print("Свързване с камерата (1080p)...")
+
+    print("Свързване с камерата (1080p capture → 640x480 YOLO)...")
     try:
         cap = CameraStream(config['system']['camera_index']).start()
     except Exception as e:
@@ -217,13 +207,13 @@ def main():
     system_state = SystemState()
     scanner = AsyncScanner(max_workers=2)
 
-    track_history = {}    # { track_id: [(cx, cy), ...] }
-    processed_tracks = {} # { track_id: {"status", "time", "uid", "payload"} }
-    
+    track_history = {}
+    processed_tracks = {}
+
     scan_cooldown = config['system'].get('scan_cooldown_sec', 1.0)
     headless = config['ui'].get('headless', False)
 
-    print("Системата е готова (1080p). Натисни 'q' за изход.")
+    print("Системата е готова. YOLO@640x480, Scanner@1080p. Натисни 'q' за изход.")
 
     cached_inv_state = inventory_db.get_inventory_state()
     cached_rec_logs = inventory_db.get_recent_logs()
@@ -234,14 +224,15 @@ def main():
     fps_display = 0
 
     while True:
-        success, frame = cap.read()
-        if not success or frame is None:
+        success, lores, hires = cap.read()
+        if not success:
             continue
 
-        h, w = frame.shape[:2]
+        h, w = lores.shape[:2]  # 480, 640
         split_x = w // 2
-            
-        yolo_pipe.submit(frame)
+
+        # YOLO работи САМО на 640x480 → бърз inference
+        yolo_pipe.submit(lores)
         results = yolo_pipe.get_results()
 
         if db_needs_update:
@@ -249,26 +240,28 @@ def main():
             cached_rec_logs = inventory_db.get_recent_logs()
             db_needs_update = False
 
-        draw_hud(frame, cached_inv_state, cached_rec_logs)
-        cv2.line(frame, (split_x, 0), (split_x, h), (200, 200, 200), 1)
+        # UI се рисува на 640x480 → бърз rendering
+        draw_hud(lores, cached_inv_state, cached_rec_logs)
+        cv2.line(lores, (split_x, 0), (split_x, h), (200, 200, 200), 1)
 
         if results is not None and results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             track_ids = results[0].boxes.id.int().cpu().numpy()
             clss = results[0].boxes.cls.cpu().numpy()
             class_names = results[0].names
-            
+
             active_ids = set()
-            
+
             for box, track_id, cls_idx in zip(boxes, track_ids, clss):
                 active_ids.add(track_id)
-                
+
+                # Координати в lores (640x480) пространство
                 x1, y1, x2, y2 = map(int, box)
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
-                
+
                 yolo_class = class_names[int(cls_idx)]
-                
+
                 if track_id not in track_history:
                     track_history[track_id] = []
                 track_history[track_id].append((cx, cy))
@@ -276,32 +269,32 @@ def main():
                     track_history[track_id].pop(0)
 
                 current_zone = "IN" if cx < split_x else "OUT"
-                
+
                 if is_stationary(track_history[track_id]) and system_state.is_active:
-                    # ВАЖНО: Първо проверяваме за готов резултат, ПРЕДИ да подадем нов scan
                     scan_result = scanner.get_result(track_id)
                     if scan_result is not None:
                         payload, code_type = scan_result
                     else:
                         payload, code_type = None, None
-                        # Подаваме нов scan само ако няма чакащ
                         should_scan = False
                         if track_id not in processed_tracks:
                             should_scan = True
                         elif time.time() - processed_tracks[track_id].get('time', 0) > scan_cooldown:
                             should_scan = True
                         if should_scan:
-                            scanner.submit_scan(track_id, frame, x1, y1, x2, y2)
-                    
+                            # Мащабиране: lores → hires за скенера
+                            hx1, hy1, hx2, hy2 = lores_to_hires(x1, y1, x2, y2)
+                            scanner.submit_scan(track_id, hires, hx1, hy1, hx2, hy2)
+
                     if payload:
-                        if (track_id in processed_tracks 
-                            and processed_tracks[track_id].get('payload') == payload 
+                        if (track_id in processed_tracks
+                            and processed_tracks[track_id].get('payload') == payload
                             and "SUCCESS" in processed_tracks[track_id].get('status', '')):
                             processed_tracks[track_id]['time'] = time.time()
                         else:
                             status = ""
                             inventory_uid = None
-                            
+
                             try:
                                 secure_code = validate_registered_code(payload, code_secret, inventory_db)
                                 inventory_uid = secure_code.inventory_uid
@@ -315,20 +308,20 @@ def main():
 
                                     if current_zone == "IN":
                                         if is_in_stock is True:
-                                            status = f"ERROR: Veche e vutre!"
+                                            status = "ERROR: Veche e vutre!"
                                         else:
                                             inventory_db.log_action(inventory_uid, yolo_class, 'ADDED')
                                             db_needs_update = True
-                                            status = f"SUCCESS: Vkarano!"
+                                            status = "SUCCESS: Vkarano!"
 
                                     elif current_zone == "OUT":
                                         if is_in_stock is False or is_in_stock is None:
-                                            status = f"ERROR: Ne e v sklada!"
+                                            status = "ERROR: Ne e v sklada!"
                                         else:
                                             inventory_db.log_action(inventory_uid, yolo_class, 'REMOVED')
                                             db_needs_update = True
-                                            status = f"SUCCESS: Izkarano!"
-                            
+                                            status = "SUCCESS: Izkarano!"
+
                             processed_tracks[track_id] = {
                                 'status': status,
                                 'time': time.time(),
@@ -336,63 +329,63 @@ def main():
                                 'payload': payload
                             }
 
+                # --- UI (рисуване на lores) ---
                 box_color = (0, 165, 255)
-                info_text = f"ID:{track_id} {yolo_class} (Moving)"
-                
+                info_text = f"ID:{track_id} {yolo_class}"
+
                 if track_id in processed_tracks:
-                    status = processed_tracks[track_id].get('status', '')
-                    if status.startswith("SUCCESS: Vkarano"):
+                    st = processed_tracks[track_id].get('status', '')
+                    if "SUCCESS: Vkarano" in st:
                         box_color = (0, 255, 0)
-                        info_text = status
-                    elif status.startswith("SUCCESS: Izkarano"):
+                        info_text = st
+                    elif "SUCCESS: Izkarano" in st:
                         box_color = (255, 100, 0)
-                        info_text = status
-                    elif status.startswith("ERROR"):
+                        info_text = st
+                    elif st.startswith("ERROR"):
                         box_color = (0, 0, 255)
-                        info_text = status
-                else:
-                    if is_stationary(track_history.get(track_id, [])):
-                        box_color = (0, 255, 255)
-                        info_text = f"ID:{track_id} {yolo_class} (Scanning...)"
+                        info_text = st
+                elif is_stationary(track_history.get(track_id, [])):
+                    box_color = (0, 255, 255)
+                    info_text = f"ID:{track_id} Scanning..."
 
                 if not system_state.is_active:
                     box_color = (128, 128, 128)
-                    info_text = f"ID:{track_id} {yolo_class} (LOCKED)"
+                    info_text = f"ID:{track_id} LOCKED"
 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-                
-                (tw, th), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                cv2.rectangle(frame, (x1, y1 - 20), (x1 + tw, y1), (0, 0, 0), -1)
-                cv2.putText(frame, info_text, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                cv2.rectangle(lores, (x1, y1), (x2, y2), box_color, 2)
+                (tw, _), _ = cv2.getTextSize(info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                cv2.rectangle(lores, (x1, y1 - 16), (x1 + tw, y1), (0, 0, 0), -1)
+                cv2.putText(lores, info_text, (x1, y1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
-            lost_tracks = list(set(track_history.keys()) - active_ids)
-            for tid in lost_tracks:
+            lost = set(track_history.keys()) - active_ids
+            for tid in lost:
                 track_history.pop(tid, None)
                 processed_tracks.pop(tid, None)
 
+        # FPS counter
         fps_count += 1
         if time.time() - fps_timer >= 1.0:
             fps_display = fps_count
             fps_count = 0
             fps_timer = time.time()
-        
+
         state_label = system_state.current
         cv2.putText(
-            frame, f"FPS: {fps_display} | {state_label}",
-            (w - 280, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+            lores, f"FPS:{fps_display} | {state_label}",
+            (w - 200, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
             (0, 255, 0) if system_state.is_active else (0, 0, 255), 1
         )
 
         if not headless:
-            cv2.imshow("Smart Checkout Tracker", frame)
+            cv2.imshow("Smart Checkout", lores)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-            
+
     scanner.shutdown()
     yolo_pipe.stop()
     cap.stop()
     cv2.destroyAllWindows()
-    print("Системата е спряна успешно.")
+    print("Системата е спряна.")
 
 if __name__ == "__main__":
     main()
