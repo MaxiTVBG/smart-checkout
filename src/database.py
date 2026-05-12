@@ -1,7 +1,8 @@
 import sqlite3
 import datetime
 import threading
-
+import json
+import os
 
 class InventoryDatabase:
     """
@@ -48,6 +49,32 @@ class InventoryDatabase:
             )
         ''')
         self.conn.commit()
+        self._seed_db()
+
+    def _seed_db(self):
+        c = self.conn.cursor()
+        c.execute("SELECT COUNT(*) FROM registered_codes")
+        if c.fetchone()[0] == 0:
+            # Look for the seed file in the data/ directory relative to the project root
+            # Assuming src/database.py is two levels deep from root
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            seed_file = os.path.join(base_dir, 'data', 'inventory_seed.json')
+            
+            if os.path.exists(seed_file):
+                try:
+                    with open(seed_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    for row in data:
+                        c.execute('''
+                            INSERT INTO registered_codes (public_uid, payload, item_class, active, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (row['public_uid'], row['payload'], row['item_class'], row['active'], row['created_at']))
+                    
+                    self.conn.commit()
+                    print(f"[{datetime.datetime.now().isoformat()}] Seeded database with {len(data)} registered codes.")
+                except Exception as e:
+                    print(f"[DB ERROR] Failed to seed database: {e}")
 
     def get_inventory_state(self):
         """Връща речник с наличностите (напр. {'class_name': 5})."""
