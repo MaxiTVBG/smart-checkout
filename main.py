@@ -8,14 +8,11 @@ import sys
 import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from ultralytics import YOLO
-
 from src.database import InventoryDatabase
 from src.scanner import scan_code_in_roi
 from src.secure_codes import SecureCodeError, load_code_secret, validate_registered_code
 from src.ui import draw_hud
-from src.camera import CameraStream
-
+from src.vision import create_pipeline
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,47 +40,7 @@ def is_stationary(history, threshold=15):
 # YOLO Pipeline (persistent worker thread)
 # ---------------------------------------------------------------------------
 
-class YOLOPipeline:
-    def __init__(self, model_path):
-        self.model = YOLO(model_path)
-        self._result = None
-        self._result_lock = threading.Lock()
-        self._frame = None
-        self._frame_lock = threading.Lock()
-        self._new_frame = threading.Event()
-        self._stopped = False
-        self._thread = threading.Thread(target=self._worker, daemon=True)
-        self._thread.start()
 
-    def submit(self, frame):
-        with self._frame_lock:
-            self._frame = frame
-        self._new_frame.set()
-
-    def _worker(self):
-        while not self._stopped:
-            self._new_frame.wait(timeout=1.0)
-            self._new_frame.clear()
-            with self._frame_lock:
-                frame = self._frame
-                self._frame = None
-            if frame is None:
-                continue
-            try:
-                results = self.model.track(
-                    frame, persist=True, tracker="bytetrack.yaml", verbose=False
-                )
-                with self._result_lock:
-                    self._result = results
-            except Exception as e:
-                print(f"[YOLO ERROR] {e}")
-
-    def get_results(self):
-        with self._result_lock:
-            return self._result
-
-    def stop(self):
-        self._stopped = True
 
 
 # ---------------------------------------------------------------------------
@@ -194,14 +151,11 @@ def main():
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     inventory_db = InventoryDatabase(db_path)
 
-    print("Зареждане на YOLO модел...")
-    yolo_pipe = YOLOPipeline(config['paths']['yolo_model'])
-
-    print("Свързване с камерата (1080p capture → 640x480 YOLO)...")
+    print("Инициализация на Vision Pipeline...")
     try:
-        cap = CameraStream(config['system']['camera_index']).start()
+        pipeline = create_pipeline(config).start()
     except Exception as e:
-        print(e)
+        print(f"Грешка при стартиране на камерата: {e}")
         return
 
     system_state = SystemState()
@@ -224,16 +178,12 @@ def main():
     fps_display = 0
 
     while True:
-        success, lores, hires = cap.read()
-        if not success:
+        success, lores, hires, detections = pipeline.read()
+        if not success or lores is None:
             continue
 
         h, w = lores.shape[:2]  # 480, 640
         split_x = w // 2
-
-        # YOLO работи САМО на 640x480 → бърз inference
-        yolo_pipe.submit(lores)
-        results = yolo_pipe.get_results()
 
         if db_needs_update:
             cached_inv_state = inventory_db.get_inventory_state()
@@ -244,23 +194,19 @@ def main():
         draw_hud(lores, cached_inv_state, cached_rec_logs)
         cv2.line(lores, (split_x, 0), (split_x, h), (200, 200, 200), 1)
 
-        if results is not None and results[0].boxes is not None and results[0].boxes.id is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            track_ids = results[0].boxes.id.int().cpu().numpy()
-            clss = results[0].boxes.cls.cpu().numpy()
-            class_names = results[0].names
+        active_ids = set()
 
-            active_ids = set()
-
-            for box, track_id, cls_idx in zip(boxes, track_ids, clss):
+        if detections:
+            for det in detections:
+                track_id = det.track_id
                 active_ids.add(track_id)
 
                 # Координати в lores (640x480) пространство
-                x1, y1, x2, y2 = map(int, box)
+                x1, y1, x2, y2 = map(int, det.box)
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
 
-                yolo_class = class_names[int(cls_idx)]
+                yolo_class = det.class_name
 
                 if track_id not in track_history:
                     track_history[track_id] = []
@@ -382,8 +328,7 @@ def main():
                 break
 
     scanner.shutdown()
-    yolo_pipe.stop()
-    cap.stop()
+    pipeline.stop()
     cv2.destroyAllWindows()
     print("Системата е спряна.")
 

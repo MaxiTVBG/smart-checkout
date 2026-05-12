@@ -1,9 +1,11 @@
 # RPi 5 Deployment Checklist
 
 ## Хардуер
-- [ ] **Захранване**: 5V / 5A (оригинално RPi 5). По-слабо → камерата пада
-- [ ] **Охлаждане**: Активен вентилатор е **задължителен**. YOLO на 1080p → 80°C+ без охлаждане
-- [ ] **Камера**: USB камера с поддръжка на 1080p. Проверка: `v4l2-ctl --list-formats-ext -d /dev/video0`
+- [ ] **Захранване**: 5V / 5A (оригинално RPi 5). По-слабо → камерата/AI модулът може да се рестартира
+- [ ] **Охлаждане**: Активен вентилатор е **задължителен**. YOLO на CPU → 80°C+ без охлаждане
+- [ ] **Камера**: 
+  - *Опция A (USB)*: USB камера с поддръжка на 1080p. Проверка: `v4l2-ctl --list-formats-ext -d /dev/video0`
+  - *Опция B (AI Camera)*: Raspberry Pi AI Camera (IMX500). Свързва се към MIPI CSI/CSI-2 порта на RPi 5. Проверете с `libcamera-hello`.
 
 ## Инсталация
 ```bash
@@ -13,7 +15,13 @@ git clone <repo> ~/s-check && cd ~/s-check
 # 2. Setup (инсталира всичко)
 chmod +x setup.sh && ./setup.sh
 
-# 3. Тест
+# 3. Конфигурация
+# Ако използвате AI камера (IMX500), редактирайте config.yaml и задайте:
+# system:
+#   vision_backend: pi_ai
+cp config.example.yaml config.yaml
+
+# 4. Тест
 source .venv/bin/activate
 python3 main.py
 

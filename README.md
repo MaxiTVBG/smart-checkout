@@ -100,7 +100,7 @@ smart-checkout/
 | Component | Requirement |
 |-----------|-------------|
 | **Python** | 3.10+ |
-| **Camera** | USB webcam with 1080p support |
+| **Camera** | USB webcam (1080p) OR **Raspberry Pi AI Camera** (IMX500) |
 | **OS** | Raspberry Pi OS Bookworm / macOS / Ubuntu |
 
 ### 1. Clone & Install
@@ -131,7 +131,8 @@ sudo apt-get install -y libzbar0 libdmtx0b libatlas-base-dev
 cp config.example.yaml config.yaml
 ```
 
-Edit `config.yaml` — set your camera index, tokens, and signing secret:
+Edit `config.yaml` — set your vision backend, camera index, tokens, and signing secret.
+If using the **Raspberry Pi AI Camera**, set `vision_backend: pi_ai`. For standard USB/Mac cameras, use `vision_backend: mac`.
 
 ```bash
 # Required: DataMatrix signing secret (min 32 characters)
@@ -234,7 +235,7 @@ journalctl -u checkout.service -f
 |-----------|-------------|-----|
 | **Power Supply** | 5V / 5A (official RPi 5 PSU) | Camera + YOLO = high power draw |
 | **Cooling** | Active fan **mandatory** | 1080p YOLO inference → 80°C+ without cooling |
-| **Camera** | USB webcam, 1080p capable | Verify: `v4l2-ctl --list-formats-ext -d /dev/video0` |
+| **Camera** | USB webcam OR Pi AI Camera | AI Camera handles inference on NPU, saving CPU resources. |
 | **Storage** | 16GB+ SD card (A2 class recommended) | WAL mode is optimized but fast storage helps |
 
 ### Health Checks
