@@ -7,7 +7,7 @@ def scan_code_in_roi(frame, x1, y1, x2, y2):
     h, w = frame.shape[:2]
 
     # 1. Голям padding — DataMatrix ИЗИСКВА широка Quiet Zone
-    pad = 80
+    pad = 40
     x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
     x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
 
@@ -16,21 +16,29 @@ def scan_code_in_roi(frame, x1, y1, x2, y2):
         return None, None
 
     roi = roi.copy()
+    h_roi, w_roi = roi.shape[:2]
+
+    # Увеличаваме резолюцията 2x (Upscale), САМО ако ROI не е прекалено голям. 
+    # pylibdmtx се нуждае от модули поне 2-3 пиксела за малки кодове.
+    # Ограничаваме до 600px, за да избегнем лаг или крашове (segfaults) при огромни изображения.
+    if w_roi < 600 and h_roi < 600:
+        roi = cv2.resize(roi, (0, 0), fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-    # 2. Adaptive Threshold — чисто черно/бяло, имунно на сенки и отблясъци
+    # 2. Adaptive Threshold — по-малък block size (21) за малки детайли
     binary = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 51, 10
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 10
     )
 
     # 3. Без resize — пълна 1080p резолюция, без загуба на детайл
     try:
-        codes = dmtx_decode(binary, max_count=1, timeout=150)
+        codes = dmtx_decode(binary, max_count=1, timeout=250)
         if codes:
             return codes[0].data.decode('utf-8'), "DataMatrix"
 
         # Fallback: сурово grayscale (понякога бинаризацията пречи)
-        codes = dmtx_decode(gray, max_count=1, timeout=150)
+        codes = dmtx_decode(gray, max_count=1, timeout=250)
         if codes:
             return codes[0].data.decode('utf-8'), "DataMatrix"
 

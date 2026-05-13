@@ -249,9 +249,7 @@ def main():
             cached_rec_logs = inventory_db.get_recent_logs()
             db_needs_update = False
 
-        draw_hud(frame, cached_inv_state, cached_rec_logs)
-        cv2.line(frame, (split_x, 0), (split_x, h), (200, 200, 200), 1)
-
+        # HUD се рисува по-надолу само ако not headless
         if results is not None and results[0].boxes is not None and results[0].boxes.id is not None:
             boxes = results[0].boxes.xyxy.cpu().numpy()
             track_ids = results[0].boxes.id.int().cpu().numpy()
@@ -376,15 +374,23 @@ def main():
             fps_count = 0
             fps_timer = time.time()
         
-        state_label = system_state.current
-        cv2.putText(
-            frame, f"FPS: {fps_display} | {state_label}",
-            (w - 280, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-            (0, 255, 0) if system_state.is_active else (0, 0, 255), 1
-        )
-
         if not headless:
-            cv2.imshow("Smart Checkout Tracker", frame)
+            draw_hud(frame, cached_inv_state, cached_rec_logs)
+            cv2.line(frame, (split_x, 0), (split_x, h), (200, 200, 200), 1)
+
+            # ОПТИМИЗАЦИЯ ЗА RASPBERRY PI: Ресайзваме кадъра преди imshow.
+            # 1080p frame rendering в X11/Wayland отнема много CPU/Време.
+            # Показваме го на 540p (половин размер).
+            display_frame = cv2.resize(frame, (w // 2, h // 2))
+            
+            state_label = system_state.current
+            cv2.putText(
+                display_frame, f"FPS: {fps_display} | {state_label}",
+                (display_frame.shape[1] - 180, display_frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                (0, 255, 0) if system_state.is_active else (0, 0, 255), 1
+            )
+
+            cv2.imshow("Smart Checkout Tracker", display_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
