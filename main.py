@@ -232,11 +232,14 @@ def main():
     fps_timer = time.time()
     fps_count = 0
     fps_display = 0
+    last_frame = None
 
     while True:
         success, frame = cap.read()
-        if not success or frame is None:
+        if not success or frame is None or frame is last_frame:
+            time.sleep(0.005)  # Предпазва от 100% CPU spin lock
             continue
+        last_frame = frame
 
         h, w = frame.shape[:2]
         split_x = w // 2
